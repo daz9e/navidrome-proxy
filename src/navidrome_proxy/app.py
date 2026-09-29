@@ -95,6 +95,9 @@ def build_services(settings: Settings, **overrides) -> Services:
     from .imports import Importer
 
     services.extra["importer"] = Importer(store, identity, catalog, deezer, finder, scheduler, navidrome)
+    from .reconcile import Reconciler
+
+    services.extra["reconciler"] = Reconciler(store, identity, deezer)
     if overrides.get("upgrader") is not None:
         services.extra["upgrader"] = overrides["upgrader"]
     elif settings.slskd_enabled and settings.slskd_upgrades:
@@ -140,12 +143,14 @@ async def _on_startup(app: web.Application) -> None:
     s.indexer.start()
     s.scheduler.start()
     s.extra["importer"].start()
+    s.extra["reconciler"].start()
     s.indexer.notify()
 
 
 async def _on_cleanup(app: web.Application) -> None:
     s = app[SERVICES]
     await s.extra["importer"].stop()
+    await s.extra["reconciler"].stop()
     await s.scheduler.stop()
     await s.indexer.stop()
     await s.covers.close()
