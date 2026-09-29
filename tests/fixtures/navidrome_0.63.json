@@ -1,0 +1,190 @@
+{
+ "song": {
+  "id": "id0001AbCdEfGhIjKlMn",
+  "parent": "id0002AbCdEfGhIjKlMn",
+  "isDir": false,
+  "title": "Example Title",
+  "album": "Example Title",
+  "artist": "Example Artist",
+  "track": 14,
+  "year": 2021,
+  "genre": "Genre",
+  "coverArt": "mf-id0003AbCdEfGhIjKlMn",
+  "size": 3746594,
+  "contentType": "audio/mp4",
+  "suffix": "m4a",
+  "duration": 215,
+  "bitRate": 128,
+  "path": "Example Artist/Example Album/01-01 - Example Title.m4a",
+  "discNumber": 1,
+  "created": "2026-01-01T00:00:00.000000000Z",
+  "albumId": "id0002AbCdEfGhIjKlMn",
+  "artistId": "id0004AbCdEfGhIjKlMn",
+  "type": "music",
+  "bpm": 0,
+  "comment": "",
+  "sortName": "example title",
+  "mediaType": "song",
+  "musicBrainzId": "",
+  "isrc": [],
+  "genres": [
+   {
+    "name": "Example Title"
+   }
+  ],
+  "replayGain": {},
+  "channelCount": 2,
+  "samplingRate": 44100,
+  "bitDepth": 16,
+  "moods": [],
+  "artists": [
+   {
+    "id": "id0004AbCdEfGhIjKlMn",
+    "name": "Example Title"
+   }
+  ],
+  "displayArtist": "Example Artist",
+  "albumArtists": [
+   {
+    "id": "id0004AbCdEfGhIjKlMn",
+    "name": "Example Title"
+   }
+  ],
+  "displayAlbumArtist": "Example Artist",
+  "contributors": [],
+  "displayComposer": "",
+  "explicitStatus": "",
+  "groupings": [],
+  "works": [],
+  "movements": []
+ },
+ "album": {
+  "id": "id0002AbCdEfGhIjKlMn",
+  "name": "Example Title",
+  "artist": "Example Artist",
+  "artistId": "id0004AbCdEfGhIjKlMn",
+  "coverArt": "al-id0005AbCdEfGhIjKlMn",
+  "songCount": 1,
+  "duration": 215,
+  "created": "2026-01-01T00:00:00.000000000Z",
+  "year": 2021,
+  "genre": "Genre",
+  "userRating": 0,
+  "genres": [
+   {
+    "name": "Example Title"
+   }
+  ],
+  "musicBrainzId": "",
+  "isCompilation": false,
+  "sortName": "example title",
+  "discTitles": [],
+  "originalReleaseDate": {},
+  "releaseDate": {
+   "year": 2021
+  },
+  "releaseTypes": [],
+  "recordLabels": [],
+  "moods": [],
+  "artists": [
+   {
+    "id": "id0004AbCdEfGhIjKlMn",
+    "name": "Example Title"
+   }
+  ],
+  "displayArtist": "Example Artist",
+  "explicitStatus": "",
+  "version": ""
+ },
+ "artist": {
+  "id": "id0004AbCdEfGhIjKlMn",
+  "name": "Example Title",
+  "coverArt": "ar-id0006AbCdEfGhIjKlMn",
+  "albumCount": 1,
+  "artistImageUrl": "http://navidrome.example/share/img/x?size=600",
+  "musicBrainzId": "",
+  "sortName": "example title",
+  "roles": [
+   "artist",
+   "maincredit",
+   "albumartist"
+  ]
+ },
+ "albumList2Item": {
+  "id": "id0007AbCdEfGhIjKlMn",
+  "name": "Example Title",
+  "artist": "Example Artist",
+  "artistId": "id0008AbCdEfGhIjKlMn",
+  "coverArt": "al-id0009AbCdEfGhIjKlMn",
+  "songCount": 1,
+  "duration": 235,
+  "created": "2026-01-01T00:00:00.000000000Z",
+  "year": 2022,
+  "genre": "Genre",
+  "userRating": 0,
+  "genres": [
+   {
+    "name": "Example Title"
+   }
+  ],
+  "musicBrainzId": "",
+  "isCompilation": false,
+  "sortName": "example title",
+  "discTitles": [],
+  "originalReleaseDate": {},
+  "releaseDate": {
+   "year": 2022
+  },
+  "releaseTypes": [],
+  "recordLabels": [],
+  "moods": [],
+  "artists": [
+   {
+    "id": "id0008AbCdEfGhIjKlMn",
+    "name": "Example Title"
+   }
+  ],
+  "displayArtist": "Example Artist",
+  "explicitStatus": "",
+  "version": ""
+ },
+ "openSubsonicExtensions": [
+  {
+   "name": "transcodeOffset",
+   "versions": [
+    1
+   ]
+  },
+  {
+   "name": "formPost",
+   "versions": [
+    1
+   ]
+  },
+  {
+   "name": "songLyrics",
+   "versions": [
+    1,
+    2
+   ]
+  },
+  {
+   "name": "indexBasedQueue",
+   "versions": [
+    1
+   ]
+  },
+  {
+   "name": "transcoding",
+   "versions": [
+    1
+   ]
+  },
+  {
+   "name": "playbackReport",
+   "versions": [
+    1
+   ]
+  }
+ ]
+}
