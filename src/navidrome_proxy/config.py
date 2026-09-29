@@ -38,6 +38,11 @@ class Settings:
     host: str = "0.0.0.0"
     port: int = 8084
     navidrome_url: str = "http://127.0.0.1:4533"
+    # Optional Navidrome admin account for background work (startScan needs admin;
+    # without it the proxy uses any credentials it recently saw and relies on
+    # Navidrome's file watcher).
+    navidrome_user: str = ""
+    navidrome_password: str = ""
     music_dir: Path = Path("/music")
     data_dir: Path = Path("/data")
     slskd_url: str = ""
@@ -88,6 +93,8 @@ class Settings:
             host=e.get("HOST", d.host),
             port=_int(e.get("PORT"), d.port),
             navidrome_url=e.get("NAVIDROME_URL", d.navidrome_url).rstrip("/"),
+            navidrome_user=e.get("NAVIDROME_USER", d.navidrome_user),
+            navidrome_password=e.get("NAVIDROME_PASSWORD", d.navidrome_password),
             music_dir=Path(e.get("MUSIC_DIR", str(d.music_dir))),
             data_dir=Path(e.get("DATA_DIR", str(d.data_dir))),
             slskd_url=e.get("SLSKD_URL", d.slskd_url).rstrip("/"),
