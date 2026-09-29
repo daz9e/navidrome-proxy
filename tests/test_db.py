@@ -131,3 +131,22 @@ def test_concurrent_writers_do_not_corrupt(store):
     for t in threads:
         t.join()
     assert sum(store.job_counts().values()) == 400
+
+
+def test_integrity_reports_healthy_and_corrupt_databases(tmp_path):
+    path = tmp_path / "x.sqlite3"
+    store = Store(path)
+    for i in range(300):
+        store.remember_track(f"deezer:{i}", {"title": "t" * 200})
+    assert store.integrity() == [] and store.integrity(quick=False) == []
+    store.close()
+    data = bytearray(path.read_bytes())
+    data[4096 * 3 : 4096 * 3 + 64] = b"\xff" * 64
+    path.write_bytes(bytes(data))
+    broken = Store.__new__(Store)
+    import sqlite3
+    import threading
+
+    broken._lock = threading.RLock()
+    broken._conn = sqlite3.connect(str(path))
+    assert broken.integrity(quick=False)

@@ -34,6 +34,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     layout = sub.add_parser("relayout", help="move files into the Artist/Album layout")
     layout.add_argument("--dry-run", action="store_true")
+    sub.add_parser("check-db", help="full integrity check of the state database")
     remux = sub.add_parser("remux-dash", help="losslessly fix DASH-fragmented m4a files")
     remux.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
@@ -61,6 +62,9 @@ def main(argv: list[str] | None = None) -> None:
             result = asyncio.run(
                 migrate.migrate_legacy(store, settings.music_dir, args.state, args.legacy_music_root)
             )
+        elif args.command == "check-db":
+            problems = store.integrity(quick=False)
+            result = {"ok": not problems, "problems": problems[:20]}
         elif args.command == "relayout":
             result = migrate.relayout(store, settings.music_dir, dry_run=args.dry_run)
         else:

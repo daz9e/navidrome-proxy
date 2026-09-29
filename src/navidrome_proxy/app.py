@@ -132,6 +132,9 @@ def _wire_jobs(s: Services) -> None:
 
 async def _on_startup(app: web.Application) -> None:
     s = app[SERVICES]
+    problems = s.store.integrity()
+    if problems:
+        raise RuntimeError(f"state database {s.settings.db_path} is corrupt: {problems[:3]}")
     await s.navidrome.start()
     await s.deezer.start()
     await s.covers.start()

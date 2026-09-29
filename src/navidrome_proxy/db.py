@@ -224,6 +224,16 @@ class Store:
                 "INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?)", (str(SCHEMA_VERSION),)
             )
 
+    def integrity(self, quick: bool = True) -> list[str]:
+        """Problems reported by SQLite (empty when the database is healthy)."""
+        pragma = "quick_check" if quick else "integrity_check"
+        try:
+            rows = self._query(f"PRAGMA {pragma}")
+        except sqlite3.DatabaseError as exc:
+            return [str(exc)]
+        problems = [r[0] for r in rows]
+        return [] if problems == ["ok"] else problems
+
     def close(self) -> None:
         with self._lock:
             self._conn.close()
