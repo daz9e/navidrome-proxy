@@ -8,7 +8,7 @@ license = { text = "MIT" }
 dependencies = [
     "aiohttp>=3.10",
     "mutagen>=1.47",
-    "yt-dlp[default]>=2026.9",
+    "yt-dlp[default,deno]>=2026.8.19",
     "ytmusicapi>=1.10",
 ]
 

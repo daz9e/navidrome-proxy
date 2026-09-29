@@ -1,0 +1,23 @@
+# Example deployment next to an existing Navidrome. Adjust the host paths.
+services:
+  navidrome-proxy:
+    build: .
+    image: navidrome-proxy:latest
+    container_name: navidrome-proxy
+    restart: unless-stopped
+    ports:
+      - "8084:8084"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    env_file:
+      - path: ./proxy.env        # secrets: SLSKD_API_KEY, NAVIDROME_USER/PASSWORD (optional)
+        required: false
+    environment:
+      NAVIDROME_URL: "http://host.docker.internal:8083"
+      SLSKD_URL: "http://host.docker.internal:5030"
+      SLSKD_DOWNLOADS_DIR: "/downloads-slskd"
+      BACKGROUND_WORKERS: "5"
+    volumes:
+      - ./data:/data                          # SQLite state and cover cache
+      - /srv/music:/music               # the folder Navidrome scans
+      - /srv/slskd:/downloads-slskd     # slskd's download folder (upgrades)
