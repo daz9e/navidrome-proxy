@@ -86,3 +86,7 @@ async def test_passthrough_streams_range_and_forwards_host(upstream, aiohttp_cli
     ui = await client.get("/app/", headers={"Host": "music.example.org"})
     assert ui.headers["X-Seen-Host"] == "music.example.org"
     assert await ui.text() == "navidrome ui /app/"
+    plain = await client.get("/app/", skip_auto_headers=["Accept-Encoding"])
+    assert plain.headers["X-Seen-Encoding"] == "identity"
+    gz = await client.get("/app/", headers={"Accept-Encoding": "gzip"})
+    assert gz.headers["X-Seen-Encoding"] == "gzip"

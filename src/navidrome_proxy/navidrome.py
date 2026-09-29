@@ -194,6 +194,8 @@ class Navidrome:
             target += "?" + qs
         headers = {k: v for k, v in request.headers.items() if k.lower() not in HOP_BY_HOP}
         headers["Host"] = request.host
+        # aiohttp would otherwise ask for gzip on the client's behalf.
+        headers.setdefault("Accept-Encoding", "identity")
         headers["X-Forwarded-Host"] = request.host
         headers["X-Forwarded-Proto"] = request.headers.get("X-Forwarded-Proto", request.scheme)
         if request.remote:
