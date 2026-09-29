@@ -190,3 +190,139 @@ class FakeNavidrome:
                 )
             return web.Response(body=data, content_type="audio/mp4", headers={"Accept-Ranges": "bytes"})
         return web.json_response(ok({"echo": {"method": method, "params": json.dumps(q)}}))
+
+
+def dz_track(
+    tid: int,
+    title: str,
+    artist: str,
+    album_id: int = 100,
+    album: str = "Album",
+    duration: int = 200,
+    artist_id: int = 1,
+    contributors: list[str] | None = None,
+    position: int = 1,
+    **extra,
+) -> dict:
+    t = {
+        "id": tid,
+        "type": "track",
+        "readable": True,
+        "title": title,
+        "title_version": "",
+        "duration": duration,
+        "rank": 1000,
+        "explicit_lyrics": False,
+        "md5_image": f"md5{album_id}",
+        "artist": {"id": artist_id, "name": artist, "picture_xl": f"https://img/{artist_id}.jpg"},
+        "album": {
+            "id": album_id,
+            "title": album,
+            "md5_image": f"md5{album_id}",
+            "release_date": "2020-05-01",
+        },
+        "track_position": position,
+        "disk_number": 1,
+        "isrc": f"ISRC{tid}",
+    }
+    if contributors is not None:
+        t["contributors"] = [{"id": i, "name": n, "role": "Main"} for i, n in enumerate(contributors)]
+    t.update(extra)
+    return t
+
+
+@dataclass
+class FakeDeezer:
+    tracks: dict[int, dict] = field(default_factory=dict)
+    albums: dict[int, dict] = field(default_factory=dict)
+    artists: dict[int, dict] = field(default_factory=dict)
+    hits: list[str] = field(default_factory=list)
+    quota_failures: int = 0
+
+    def add_album(
+        self,
+        album_id: int,
+        title: str,
+        artist: str,
+        artist_id: int,
+        tracks: list[dict],
+        release_date: str = "2020-05-01",
+    ) -> None:
+        self.albums[album_id] = {
+            "id": album_id,
+            "title": title,
+            "md5_image": f"md5{album_id}",
+            "release_date": release_date,
+            "nb_tracks": len(tracks),
+            "record_type": "album",
+            "explicit_lyrics": False,
+            "genres": {"data": [{"id": 1, "name": "Rap"}]},
+            "artist": {"id": artist_id, "name": artist},
+            "tracks": {"data": tracks},
+        }
+        for t in tracks:
+            self.tracks[t["id"]] = t
+        self.artists.setdefault(
+            artist_id,
+            {"id": artist_id, "name": artist, "nb_album": 1, "picture_xl": f"https://img/{artist_id}.jpg"},
+        )
+
+    def app(self) -> web.Application:
+        app = web.Application()
+        app.router.add_get("/{path:.*}", self.handle)
+        return app
+
+    async def handle(self, request: web.Request) -> web.Response:
+        path = request.match_info["path"]
+        self.hits.append(request.path_qs)
+        if self.quota_failures > 0:
+            self.quota_failures -= 1
+            return web.json_response(
+                {"error": {"type": "Exception", "message": "Quota limit exceeded", "code": 4}}
+            )
+        parts = path.split("/")
+        q = request.query.get("q", "").lower()
+        if parts[0] == "search":
+            kind = parts[1] if len(parts) > 1 else "track"
+            if kind == "track":
+                data = [
+                    dict({k: v for k, v in t.items() if k != "contributors"})
+                    for t in self.tracks.values()
+                    if all(w in f"{t['title']} {t['artist']['name']}".lower() for w in q.split())
+                ]
+            elif kind == "album":
+                data = [
+                    {k: v for k, v in a.items() if k != "tracks"}
+                    for a in self.albums.values()
+                    if all(w in f"{a['title']} {a['artist']['name']}".lower() for w in q.split())
+                ]
+            else:
+                data = [a for a in self.artists.values() if q and q in a["name"].lower()]
+            return web.json_response({"data": data, "total": len(data)})
+        if parts[0] == "track" and int(parts[1]) in self.tracks:
+            t = dict(self.tracks[int(parts[1])])
+            t.setdefault("contributors", [{"id": 0, "name": t["artist"]["name"], "role": "Main"}])
+            return web.json_response(t)
+        if parts[0] == "album" and int(parts[1]) in self.albums:
+            album = self.albums[int(parts[1])]
+            if len(parts) > 2 and parts[2] == "tracks":
+                return web.json_response(
+                    {"data": album["tracks"]["data"], "total": len(album["tracks"]["data"])}
+                )
+            return web.json_response(album)
+        if parts[0] == "artist" and int(parts[1]) in self.artists:
+            aid = int(parts[1])
+            if len(parts) > 2 and parts[2] == "albums":
+                data = [
+                    {k: v for k, v in a.items() if k != "tracks"}
+                    for a in self.albums.values()
+                    if a["artist"]["id"] == aid
+                ]
+                return web.json_response({"data": data, "total": len(data)})
+            if len(parts) > 2 and parts[2] == "top":
+                data = [t for t in self.tracks.values() if t["artist"]["id"] == aid]
+                return web.json_response({"data": data[: int(request.query.get("limit", 5))]})
+            if len(parts) > 2 and parts[2] == "related":
+                return web.json_response({"data": [a for a in self.artists.values() if a["id"] != aid]})
+            return web.json_response(self.artists[aid])
+        return web.json_response({"error": {"type": "DataException", "message": "no data", "code": 800}})
