@@ -51,7 +51,8 @@ docker compose up -d --build
 | `BACKGROUND_WORKERS` | `5` | parallel background downloads |
 
 All options: [`config.py`](src/navidrome_proxy/config.py).
-Moving from the first version: `migrate-legacy`, `remux-dash`, `relayout` (all support `--dry-run`).
+Moving from the first version: `migrate-legacy`, `adopt-youtube-fallbacks`, `remux-dash`,
+`repair-covers`, then `relayout` once Navidrome has rescanned (all but the first support `--dry-run`).
 
 ## Develop
 
