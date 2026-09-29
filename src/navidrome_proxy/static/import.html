@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="ru">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Импорт треков</title>
+<title>Track import</title>
 <style>
   :root { --bg:#f6f6f4; --fg:#1b1b1b; --muted:#6b6b6b; --card:#fff; --line:#e3e3df; --accent:#2f6fde; --ok:#1f8a4c; --warn:#b7791f; --bad:#c0392b; }
   @media (prefers-color-scheme: dark) { :root { --bg:#141414; --fg:#eaeaea; --muted:#9a9a9a; --card:#1e1e1e; --line:#2c2c2c; --accent:#6a9bff; } }
@@ -28,19 +28,19 @@
 </head>
 <body>
 <main>
-  <h1>Импорт треков в библиотеку</h1>
+  <h1>Import tracks into the library</h1>
   <div class="card">
     <div class="row">
-      <div><label for="u">Пользователь Navidrome</label><input id="u" type="text" autocomplete="username"></div>
-      <div><label for="p">Пароль</label><input id="p" type="password" autocomplete="current-password"></div>
+      <div><label for="u">Navidrome user</label><input id="u" type="text" autocomplete="username"></div>
+      <div><label for="p">Password</label><input id="p" type="password" autocomplete="current-password"></div>
     </div>
-    <label for="text">Список: по строке «Исполнитель - Название», можно с номером, [альбомом] и (3:07)</label>
+    <label for="text">One "Artist - Title" per line; a leading number, [album] and (3:07) are allowed</label>
     <textarea id="text" placeholder="1. TVETH, BATO - Hella Quality&#10;Imagine Dragons - Radioactive [Night Visions]"></textarea>
     <div class="row">
-      <div><label for="playlist">Плейлист (необязательно)</label><input id="playlist" type="text" placeholder="например: Крис — лайки"></div>
-      <div><label><input id="like" type="checkbox" checked> Лайкнуть все найденные</label></div>
+      <div><label for="playlist">Playlist (optional)</label><input id="playlist" type="text" placeholder="e.g. Imported likes"></div>
+      <div><label><input id="like" type="checkbox" checked> Like everything found</label></div>
     </div>
-    <button id="go">Импортировать</button>
+    <button id="go">Import</button>
     <p class="muted" id="msg"></p>
   </div>
   <div class="card" id="report" hidden>
@@ -52,21 +52,21 @@
 </main>
 <script>
 const $ = id => document.getElementById(id);
-const labels = { matched:"найден", fallback:"найден (не уверен)", matched_youtube:"YouTube", matched_soundcloud:"SoundCloud",
-  not_found:"не найден", invalid:"не разобрана строка", error:"ошибка", pending:"в очереди",
-  ready:"скачан", queued:"ждёт загрузки", downloading:"качается", failed:"не скачался", new:"ждёт" };
+const labels = { matched:"matched", fallback:"matched (unsure)", matched_youtube:"YouTube", matched_soundcloud:"SoundCloud",
+  not_found:"not found", invalid:"unparsed line", error:"error", pending:"pending",
+  ready:"downloaded", queued:"waiting", downloading:"downloading", failed:"download failed", new:"waiting" };
 try { $("u").value = localStorage.getItem("np-user") || ""; } catch (e) {}
 let timer = null;
 function creds() { return "u=" + encodeURIComponent($("u").value) + "&p=" + encodeURIComponent($("p").value); }
 $("go").onclick = async () => {
-  $("go").disabled = true; $("msg").textContent = "Отправляю…";
+  $("go").disabled = true; $("msg").textContent = "Sending…";
   try { localStorage.setItem("np-user", $("u").value); } catch (e) {}
   const res = await fetch("../proxy/v1/imports", { method:"POST", headers:{ "Content-Type":"application/json" },
     body: JSON.stringify({ u:$("u").value, p:$("p").value, text:$("text").value, like:$("like").checked, playlist:$("playlist").value }) });
   const data = await res.json().catch(() => ({}));
   $("go").disabled = false;
-  if (!res.ok) { $("msg").textContent = "Ошибка: " + (data.error || res.status); return; }
-  $("msg").textContent = "Импорт запущен: " + data.id;
+  if (!res.ok) { $("msg").textContent = "Error: " + (data.error || res.status); return; }
+  $("msg").textContent = "Import started: " + data.id;
   clearInterval(timer); poll(data.id); timer = setInterval(() => poll(data.id), 3000);
 };
 async function poll(id) {
@@ -74,7 +74,7 @@ async function poll(id) {
   if (!res.ok) return;
   const r = await res.json();
   $("report").hidden = false;
-  $("state").textContent = r.status === "completed" ? "Разбор списка завершён" : "Разбираю список…";
+  $("state").textContent = r.status === "completed" ? "Matching finished" : "Matching…";
   $("progress").textContent = r.progress.done + " / " + r.progress.total;
   $("fill").style.width = (100 * r.progress.done / Math.max(1, r.progress.total)) + "%";
   const chips = Object.entries(r.counts).map(([k, v]) => `<span>${labels[k] || k}: ${v}</span>`)

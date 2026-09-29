@@ -127,4 +127,4 @@ async def test_import_playlist_keeps_list_order(world):
 
 async def test_import_page_is_served(world):
     page = await world.client.get("/proxy/import")
-    assert page.status == 200 and "Импорт" in await page.text()
+    assert page.status == 200 and "Import tracks" in await page.text()
