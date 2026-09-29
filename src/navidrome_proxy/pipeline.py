@@ -176,12 +176,21 @@ class Pipeline:
                 self.indexer.notify()
             if self.settings.lyrics:
                 self._spawn(self._lyrics(dest, tag_meta))
+            if fresh.album_id and track.id.startswith("deezer:"):
+                # Warm the album's track list: local album pages are completed from it.
+                self._spawn(self._warm_album(fresh.album_id))
             log.info(
                 "ready %s <- %s %s (%.0fs, %s)", track.id, cand.source, cand.ref, info.duration, dest.name
             )
             return fresh
         finally:
             shutil.rmtree(staging, ignore_errors=True)
+
+    async def _warm_album(self, album_id: str) -> None:
+        try:
+            await self.deezer.album_tracks(album_id)
+        except DeezerError:
+            pass
 
     async def _lyrics(self, dest: Path, meta: dict[str, Any]) -> None:
         found = await lyrics.fetch(self.covers.session, meta)
