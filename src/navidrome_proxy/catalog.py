@@ -141,10 +141,10 @@ class Catalog:
                 seen.add(track.local_id)
                 out.append(local_songs[track.local_id])
                 continue
-            shown_id = track.id if track.is_ready else track_id
-            if shown_id in seen:
+            # Not indexed yet: keep the id the caller listed, deduplicate by recording.
+            if track.id in seen:
                 continue
-            seen.add(shown_id)
+            seen.add(track.id)
             star = starred.get(track_id) or starred.get(track.id)
-            out.append(self.virtual_song(shown_id, track, star))
+            out.append(self.virtual_song(track_id, track, star))
         return out
