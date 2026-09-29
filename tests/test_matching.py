@@ -103,3 +103,10 @@ def test_source_scoring_reads_artist_from_video_title_and_prefers_topic():
 def test_source_scoring_allows_version_present_in_request():
     wanted = m.Wanted("Song (Live)", ["Band"], duration=300)
     assert m.score_source_candidate(wanted, "Band - Song (Live)", "Band", 301).rejected is None
+
+
+def test_relevance_supports_prefixes_and_cyrillic():
+    assert m.relevance("юпи порезы", "Юпи", "Порезы на руках") == 1.0
+    assert m.relevance("юпи порезы", "Естраден Оркестър", "Всичко започна през юни") == 0.0
+    assert m.relevance("big ba", "Big Baby Tape", "Gimme The Loot") == 1.0
+    assert m.relevance("big baby tape kizaru", "Big Baby Tape", "Bandana") == 0.75

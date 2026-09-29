@@ -107,8 +107,13 @@ class FakeNavidrome:
         return None
 
     async def other(self, request: web.Request) -> web.Response:
-        return web.Response(text=f"navidrome ui {request.path}", headers={
-            "X-Seen-Host": request.host, "X-Seen-Encoding": request.headers.get("Accept-Encoding", "")})
+        return web.Response(
+            text=f"navidrome ui {request.path}",
+            headers={
+                "X-Seen-Host": request.host,
+                "X-Seen-Encoding": request.headers.get("Accept-Encoding", ""),
+            },
+        )
 
     async def handle(self, request: web.Request) -> web.StreamResponse:
         method = request.match_info["method"].removesuffix(".view")

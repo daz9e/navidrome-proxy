@@ -213,6 +213,25 @@ def remember_soundcloud(s: Services, rows: list[dict]) -> list[str]:
     return [track_id for track_id, _ in items]
 
 
+def _relevant(query: str, rows: list[dict], fields) -> list[dict]:
+    """Re-rank catalog hits by how much of the query they contain; drop unrelated ones.
+
+    Deezer's own ranking is popularity-driven: "юпи порезы" returned an unrelated
+    popular song first and the right track sixth.
+    """
+    if PREFIX.match(query) or YOUTUBE_URL.search(query):
+        return rows
+    scored = [(matching.relevance(query, *fields(r)), i, r) for i, r in enumerate(rows)]
+    words = len(matching.normalize(query).split())
+    floor = 1.0 if words <= 2 else 0.6
+    kept = [(score, i, r) for score, i, r in scored if score >= floor]
+    if not kept:
+        # Transliterations and typos ("zemfira"): trust the catalog's own top hits.
+        return rows[:5]
+    kept.sort(key=lambda x: (-x[0], x[1]))
+    return [r for _, _, r in kept]
+
+
 # --------------------------------------------------------------------- merge
 async def _merge(
     s: Services, call: Call, query: str, counts, local: dict[str, list], external: dict[str, list]
@@ -223,7 +242,19 @@ async def _merge(
     local_ids = {str(x.get("id")) for x in local_songs}
     local_keys = {recording_key(x.get("artist"), x.get("title")) for x in local_songs} - {None}
 
-    deezer_ids = s.catalog.remember_deezer(external.get("tracks", []))
+    tracks = _relevant(
+        query,
+        external.get("tracks", []),
+        lambda r: (r.get("artist", {}).get("name"), r.get("title"), r.get("album", {}).get("title")),
+    )
+    external["youtube"] = _relevant(
+        query, external.get("youtube", []), lambda r: (" ".join(r["artists"]), r["title"], r.get("album"))
+    )
+    external["albums"] = _relevant(
+        query, external.get("albums", []), lambda r: ((r.get("artist") or {}).get("name"), r.get("title"))
+    )
+    external["tracks"] = tracks
+    deezer_ids = s.catalog.remember_deezer(tracks)
     deezer_keys = {
         recording_key(r.get("artist", {}).get("name"), r.get("title")) for r in external.get("tracks", [])
     } - {None}

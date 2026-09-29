@@ -252,3 +252,16 @@ def score_source_candidate(
         score += 10
         reasons.append("official")
     return Scored(round(score, 2), reasons)
+
+
+def relevance(query: str, *fields: str | None) -> float:
+    """Share of query words found in the fields (prefix match, for search-as-you-type)."""
+    wanted = normalize(query).split()
+    if not wanted:
+        return 0.0
+    have = normalize(" ".join(f for f in fields if f)).split()
+    hits = 0
+    for word in wanted:
+        if any(h == word or (len(word) >= 2 and h.startswith(word)) for h in have):
+            hits += 1
+    return hits / len(wanted)
