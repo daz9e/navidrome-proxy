@@ -157,6 +157,9 @@ class Scheduler:
         if job.kind == "download":
             self.store.update_track(job.track_id, status="downloading")
         started = time.monotonic()
+        from .deezer import background
+
+        background.set(job.priority >= BACKGROUND)
         try:
             if handler is None:
                 raise SourceError(f"no handler for {job.kind}", transient=False)

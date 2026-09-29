@@ -87,3 +87,23 @@ async def test_rate_limiter_spaces_requests():
     for _ in range(6):
         await limiter.acquire()
     assert time.monotonic() - start >= 0.18
+
+
+async def test_background_callers_leave_a_reserve_for_interactive_ones():
+    limiter = dz.RateLimiter(per_second=5, burst=6, reserve=4)
+    order = []
+
+    async def bg(i):
+        await limiter.acquire(True)
+        order.append(f"bg{i}")
+
+    async def fg():
+        await limiter.acquire(False)
+        order.append("fg")
+
+    tasks = [asyncio.create_task(bg(i)) for i in range(4)]
+    await asyncio.sleep(0.05)
+    await asyncio.wait_for(fg(), timeout=0.2)  # served from the reserve, no waiting
+    assert order[:2] == ["bg0", "bg1"] and "fg" in order[:3]
+    for t in tasks:
+        t.cancel()

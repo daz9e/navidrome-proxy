@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import logging
 import time
@@ -24,26 +25,43 @@ class DeezerError(Exception):
     pass
 
 
-class RateLimiter:
-    """A token bucket: Deezer allows 50 requests per 5 seconds per IP."""
+# Set by background work (queue jobs, imports, reconciler) so a user's search never
+# waits behind a bulk import for Deezer's shared request budget.
+background = contextvars.ContextVar("deezer_background", default=False)
 
-    def __init__(self, per_second: float, burst: int = 10):
+
+class RateLimiter:
+    """A token bucket: Deezer allows 50 requests per 5 seconds per IP.
+
+    Background callers leave ``reserve`` tokens untouched for interactive ones.
+    """
+
+    def __init__(self, per_second: float, burst: int = 10, reserve: int = 4):
         self.per_second = max(0.1, per_second)
         self.capacity = float(burst)
         self.tokens = float(burst)
+        self.reserve = min(reserve, burst - 1)
         self.updated = time.monotonic()
         self._lock = asyncio.Lock()
+        self._background_lock = asyncio.Lock()
 
-    async def acquire(self) -> None:
-        async with self._lock:
-            while True:
-                now = time.monotonic()
-                self.tokens = min(self.capacity, self.tokens + (now - self.updated) * self.per_second)
-                self.updated = now
-                if self.tokens >= 1:
-                    self.tokens -= 1
-                    return
-                await asyncio.sleep((1 - self.tokens) / self.per_second)
+    async def acquire(self, is_background: bool = False) -> None:
+        if not is_background:
+            await self._take(1.0)
+            return
+        # Background callers queue among themselves, then wait for spare tokens.
+        async with self._background_lock:
+            await self._take(1.0 + self.reserve)
+
+    async def _take(self, needed: float) -> None:
+        while True:
+            now = time.monotonic()
+            self.tokens = min(self.capacity, self.tokens + (now - self.updated) * self.per_second)
+            self.updated = now
+            if self.tokens >= needed:
+                self.tokens -= 1
+                return
+            await asyncio.sleep((needed - self.tokens) / self.per_second)
 
 
 class LRU:
@@ -197,7 +215,7 @@ class Deezer:
         url = f"{self.base_url}/{path.lstrip('/')}"
         last: Exception | None = None
         for attempt in range(4):
-            await self.limiter.acquire()
+            await self.limiter.acquire(background.get())
             try:
                 async with self._session.get(url) as resp:
                     if resp.status >= 500 or resp.status == 429:

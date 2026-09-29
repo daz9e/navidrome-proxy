@@ -176,6 +176,9 @@ class Importer:
                     self.store.save_import(import_id, imp["username"], "failed", imp["options"], imp["rows"])
 
     async def _run(self, import_id: str) -> None:
+        from .deezer import background
+
+        background.set(True)
         imp = self.store.get_import(import_id)
         if imp is None or imp["status"] in ("completed", "failed"):
             return

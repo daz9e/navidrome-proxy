@@ -57,6 +57,9 @@ class Reconciler:
             await asyncio.sleep(self.interval)
 
     async def run_once(self) -> int:
+        from .deezer import background
+
+        background.set(True)
         linked = 0
         checked = 0
         for track in self.store.tracks_with_status("ready"):
