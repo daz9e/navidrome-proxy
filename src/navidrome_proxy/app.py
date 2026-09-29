@@ -92,6 +92,14 @@ def build_services(settings: Settings, **overrides) -> Services:
         intents,
     )
     services.extra["background_credentials"] = background_credentials
+    if overrides.get("upgrader") is not None:
+        services.extra["upgrader"] = overrides["upgrader"]
+    elif settings.slskd_enabled and settings.slskd_upgrades:
+        from .slskd import Slskd, Upgrader
+
+        client = Slskd(settings.slskd_url, settings.slskd_api_key, settings.slskd_downloads_dir)
+        services.extra["slskd"] = client
+        services.extra["upgrader"] = Upgrader(store, library, client, settings.slskd_min_peers, covers)
     _wire_jobs(services)
     return services
 
@@ -136,6 +144,8 @@ async def _on_cleanup(app: web.Application) -> None:
     await s.scheduler.stop()
     await s.indexer.stop()
     await s.covers.close()
+    if "slskd" in s.extra:
+        await s.extra["slskd"].close()
     await s.deezer.close()
     await s.navidrome.close()
     s.store.close()
