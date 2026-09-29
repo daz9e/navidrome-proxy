@@ -103,8 +103,12 @@ async def test_repair_covers_reembeds_truncated_artwork(tmp_path):
     from navidrome_proxy.covers import Covers
 
     full = b"\xff\xd8\xff\xe0" + b"x" * 5000 + b"\xff\xd9"
+
+    async def image(_):
+        return web.Response(body=full, content_type="image/jpeg")
+
     app = web.Application()
-    app.router.add_get("/c.jpg", lambda _: web.Response(body=full, content_type="image/jpeg"))
+    app.router.add_get("/c.jpg", image)
     server = TestServer(app)
     await server.start_server()
     covers = Covers(tmp_path / "covers")
@@ -128,4 +132,58 @@ async def test_repair_covers_reembeds_truncated_artwork(tmp_path):
     finally:
         store.close()
         await covers.close()
+        await server.close()
+
+
+async def test_adopt_youtube_fallbacks_tags_files_from_the_catalog(tmp_path):
+    from aiohttp.test_utils import TestServer
+
+    from navidrome_proxy.covers import Covers
+    from navidrome_proxy.deezer import Deezer
+
+    from .fakes import FakeDeezer, dz_track
+
+    fake = FakeDeezer()
+    fake.add_album(
+        100,
+        "RAW",
+        "TVETH",
+        1,
+        [
+            dz_track(4145181542, "BURN", "тёмный принц", 100, "RAW", duration=20, position=2),
+            dz_track(4145181543, "Long", "тёмный принц", 100, "RAW", duration=200, position=3),
+        ],
+    )
+    server = TestServer(fake.app())
+    await server.start_server()
+    store = Store(tmp_path / "db.sqlite3")
+    deezer = Deezer(store, per_second=100, base_url=str(server.make_url("")).rstrip("/"))
+    await deezer.start()
+    covers = Covers(tmp_path / "covers")
+    await covers.start()
+    music = tmp_path / "music"
+    music.mkdir()
+    burn = make(music / "yt-4145181542-yt.m4a", 20)
+    tagging.write_tags(burn, {"title": "BURN", "artist": "тёмный принц"})
+    other = make(music / "yt-4145181543-yt.m4a", 20)  # 20 s vs 200 s: another version
+    store.remember_track("yt:4145181542-yt", {"title": "BURN"})  # misread by the old regex
+    store.update_track("yt:4145181542-yt", status="ready", file=str(burn), local_id="ND1")
+    try:
+        dry = await migrate.adopt_youtube_fallbacks(store, music, deezer, covers, dry_run=True)
+        assert dry == {"found": 2, "adopted": 1, "other_version": 1}
+        assert "album" not in tagging.read_tags(burn)
+        await migrate.adopt_youtube_fallbacks(store, music, deezer, covers)
+        tags = tagging.read_tags(burn)
+        assert tags["album"] == ["RAW"] and tags["tracknumber"][0].startswith("2")
+        track = store.get_track("deezer:4145181542")
+        assert (track.status, track.file, track.local_id) == ("ready", str(burn), "ND1")
+        assert store.get_track("yt:4145181542-yt").status == "new"
+        assert "album" not in tagging.read_tags(other)
+        # relayout now names it like any other catalog track
+        assert migrate.relayout(store, music)["moved"] == 1
+        assert (music / "TVETH" / "RAW" / "1-02 - BURN [deezer-4145181542].m4a").is_file()
+    finally:
+        store.close()
+        await covers.close()
+        await deezer.close()
         await server.close()

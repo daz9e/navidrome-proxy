@@ -22,8 +22,9 @@ from typing import Any
 from . import audio, ids, matching, tagging
 from .covers import Covers, is_complete_image
 from .db import Store
+from .deezer import Deezer, DeezerError
 from .identity import Identity
-from .library import Library, relative_path, track_id_from_path
+from .library import LEGACY_YOUTUBE_FALLBACK, Library, relative_path, track_id_from_path
 
 log = logging.getLogger(__name__)
 
@@ -265,3 +266,80 @@ async def repair_covers(
             await asyncio.to_thread(tagging.set_cover, path, found[0])
         stats["repaired"] += 1
     return stats
+
+
+async def adopt_youtube_fallbacks(
+    store: Store,
+    music_dir: Path,
+    deezer: Deezer,
+    covers: Covers,
+    dry_run: bool = False,
+    tolerance: float = 15.0,
+) -> dict[str, int]:
+    """Give the first proxy's ``yt-<deezer id>-yt`` files their catalog tags.
+
+    The first proxy stored YouTube audio for a Deezer track without album tags, so
+    such songs sat in "[Unknown Album]" without artwork. The tags are rewritten in
+    place, which Navidrome treats as the same song (id, likes, plays and playlists
+    stay). Run ``relayout`` only after Navidrome has rescanned: a retag and a move
+    seen in the same scan would give the song a new id.
+    """
+    stats: dict[str, int] = defaultdict(int)
+    identity = Identity(store)
+    for path in sorted(music_dir.rglob("yt-*-yt.*")):
+        match = LEGACY_YOUTUBE_FALLBACK.match(path.stem)
+        if not match or path.suffix.lower() not in AUDIO:
+            continue
+        stats["found"] += 1
+        track_id = f"deezer:{match.group(1)}"
+        existing = store.get_track(track_id)
+        if (
+            existing is not None
+            and existing.is_ready
+            and existing.file
+            and existing.file != str(path)
+            and Path(existing.file).is_file()
+        ):
+            stats["duplicate"] += 1
+            log.info("%s duplicates %s; left as it is", path, existing.file)
+            continue
+        try:
+            meta = await deezer.full_track_meta(match.group(1))
+        except DeezerError as exc:
+            stats["not_in_catalog"] += 1
+            log.info("%s: %s", path, exc)
+            continue
+        try:
+            info = await audio.probe(path)
+        except Exception as exc:
+            stats["unreadable"] += 1
+            log.warning("cannot read %s: %s", path, exc)
+            continue
+        if meta.get("duration") and abs(info.duration - float(meta["duration"])) > tolerance:
+            stats["other_version"] += 1
+            log.info("%s is %.0fs, catalog says %ss; left as it is", path, info.duration, meta["duration"])
+            continue
+        stats["adopted"] += 1
+        if dry_run:
+            continue
+        found = await covers.get(meta.get("cover"))
+        await asyncio.to_thread(tagging.write_tags, path, meta, found[0] if found else None)
+        bogus = store.get_track(f"yt:{match.group(1)}-yt")  # misread by an earlier migrate-legacy
+        local_id = (existing.local_id if existing else None) or (bogus.local_id if bogus else None)
+        store.remember_track(track_id, meta)
+        store.update_track(
+            track_id,
+            status="ready",
+            file=str(path),
+            audio=info.as_dict(),
+            source="legacy-youtube",
+            error=None,
+            local_id=local_id,
+        )
+        if bogus is not None:
+            store.update_track(bogus.id, status="new", file=None, local_id=None)
+            identity.link(bogus.id, track_id, "legacy")
+        track = store.get_track(track_id)
+        assert track is not None
+        identity.register(track)
+    return dict(stats)

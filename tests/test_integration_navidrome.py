@@ -238,3 +238,40 @@ def test_virtual_payload_is_the_same_shape_as_real_objects():
     # Guard for the committed fixture: it must still be a Navidrome 0.63 capture.
     fixture = json.loads((Path(__file__).parent / "fixtures" / "navidrome_0.63.json").read_text())
     assert {"song", "album", "artist"} <= set(fixture)
+
+
+def test_retagging_into_an_album_keeps_star_and_playlist(navidrome):
+    """What Navidrome does when a legacy album-less file gets its catalog tags."""
+    base, music, _ = navidrome
+    path = make(music / "yt-777-yt.m4a", 20)
+    tagging.write_tags(path, {"title": "Loose Single", "artist": "Kai Angel"})
+    nd(base, "startScan", "fullScan=false")
+    wait_scan(base)
+    song = nd(base, "search3", "query=Loose&songCount=5")["searchResult3"]["song"][0]
+    nd(base, "star", f"id={song['id']}")
+    nd(base, "scrobble", f"id={song['id']}&submission=true")
+    pl = nd(base, "createPlaylist", f"name=retag&songId={song['id']}")["playlist"]["id"]
+    tagging.write_tags(
+        path,
+        {
+            "title": "Loose Single",
+            "artist": "Kai Angel",
+            "album": "Shh",
+            "album_artist": "Kai Angel",
+            "track": 3,
+        },
+    )
+    nd(base, "startScan", "fullScan=false")
+    wait_scan(base)
+    after = nd(base, "search3", "query=Loose&songCount=5")["searchResult3"]["song"]
+    print(
+        "before",
+        song["id"],
+        "after",
+        [(s["id"], s.get("album"), s.get("starred"), s.get("playCount")) for s in after],
+    )
+    entries = nd(base, "getPlaylist", f"id={pl}")["playlist"].get("entry", [])
+    print("playlist", [(e["id"], e.get("album")) for e in entries])
+    assert len(after) == 1 and after[0]["album"] == "Shh"
+    assert after[0].get("starred"), "star lost"
+    assert [e["id"] for e in entries] == [after[0]["id"]], "playlist entry lost"

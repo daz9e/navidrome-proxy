@@ -39,6 +39,10 @@ def main(argv: list[str] | None = None) -> None:
     remux.add_argument("--dry-run", action="store_true")
     repair = sub.add_parser("repair-covers", help="re-embed truncated or missing artwork")
     repair.add_argument("--dry-run", action="store_true")
+    fallbacks = sub.add_parser(
+        "adopt-youtube-fallbacks", help="tag the first proxy's yt-<deezer id>-yt files from the catalog"
+    )
+    fallbacks.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
     settings = Settings.from_env()
     configure_logging(settings.log_level)
@@ -69,6 +73,8 @@ def main(argv: list[str] | None = None) -> None:
             result = {"ok": not problems, "problems": problems[:20]}
         elif args.command == "relayout":
             result = migrate.relayout(store, settings.music_dir, dry_run=args.dry_run)
+        elif args.command == "adopt-youtube-fallbacks":
+            result = asyncio.run(_adopt_youtube_fallbacks(store, settings, args.dry_run))
         elif args.command == "repair-covers":
             result = asyncio.run(_repair_covers(store, settings, args.dry_run))
         else:
@@ -87,6 +93,24 @@ async def _repair_covers(store, settings: Settings, dry_run: bool) -> dict[str, 
     try:
         return await migrate.repair_covers(store, settings.music_dir, covers, dry_run=dry_run)
     finally:
+        await covers.close()
+
+
+async def _adopt_youtube_fallbacks(store, settings: Settings, dry_run: bool) -> dict[str, int]:
+    from . import migrate
+    from .covers import Covers
+    from .deezer import Deezer
+
+    covers = Covers(settings.cache_dir / "covers")
+    deezer = Deezer(store, per_second=3.0)  # leaves room for the running proxy
+    await covers.start()
+    await deezer.start()
+    try:
+        return await migrate.adopt_youtube_fallbacks(
+            store, settings.music_dir, deezer, covers, dry_run=dry_run
+        )
+    finally:
+        await deezer.close()
         await covers.close()
 
 

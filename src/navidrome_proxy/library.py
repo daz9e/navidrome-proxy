@@ -38,6 +38,8 @@ log = logging.getLogger(__name__)
 
 _TOKEN = re.compile(r"\[(deezer-\d+|yt-[A-Za-z0-9_-]{11}|sc-\d+)\]")
 _LEGACY = re.compile(r"^(deezer-\d+|yt-[A-Za-z0-9_-]{11})$")
+# First proxy: a Deezer track whose audio came from YouTube, kept without album tags.
+LEGACY_YOUTUBE_FALLBACK = re.compile(r"^yt-(\d+)-yt$")
 _UNSAFE = re.compile(r'[\x00-\x1f/\\:*?"<>|]+')
 
 
@@ -52,6 +54,8 @@ def file_stem(track_id: str) -> str:
 def track_id_from_path(path: str | Path) -> str | None:
     """Recover the external track id from a library file name (new or legacy)."""
     stem = Path(str(path)).stem
+    if fallback := LEGACY_YOUTUBE_FALLBACK.match(stem):
+        return f"deezer:{fallback.group(1)}"
     match = _TOKEN.search(stem) or _LEGACY.match(stem)
     if not match:
         return None

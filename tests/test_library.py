@@ -48,6 +48,9 @@ def test_track_id_from_path_new_and_legacy():
     assert track_id_from_path("ЮПИ/YouTube/Кошмар [yt-sO4pSj466Hk].m4a") == "yt:sO4pSj466Hk"
     assert track_id_from_path("Юпи/SoundCloud/x [sc-2398309779].m4a") == "sc:2398309779"
     assert track_id_from_path("Persona/Aria of the Soul.m4a") is None
+    # first proxy: YouTube audio for a Deezer track ("99624046-yt" is 11 chars, not a video id)
+    assert track_id_from_path("/music/yt-99624046-yt.m4a") == "deezer:99624046"
+    assert track_id_from_path("/music/yt-4145181542-yt.m4a") == "deezer:4145181542"
 
 
 def test_publish_is_atomic_and_moves_sidecars_on_format_change(tmp_path):
