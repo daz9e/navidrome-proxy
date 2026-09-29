@@ -125,12 +125,13 @@ class FakeNavidrome:
             return web.json_response(ok())
         if method in ("search2", "search3"):
             query = q.get("query", "").strip('"').lower()
+            words = query.split()
             count = int(q.get("songCount", 20))
             offset = int(q.get("songOffset", 0))
             found = [
                 s
                 for s in self.songs.values()
-                if not query or query in f"{s['title']} {s['artist']} {s['path']}".lower()
+                if all(w in f"{s['title']} {s['artist']} {s['album']}".lower() for w in words)
             ]
             key = "searchResult3" if method == "search3" else "searchResult2"
             return web.json_response(ok({key: {"song": found[offset : offset + count]} if count else {}}))
@@ -172,6 +173,45 @@ class FakeNavidrome:
                     return web.json_response(failed(70, "not found"))
                 pl["songs"].append(i)
             return web.json_response(ok())
+        if method == "getAlbum":
+            songs = [x for x in self.songs.values() if x["albumId"] == q.get("id")]
+            if not songs:
+                return web.json_response(failed(70, "Album not found"))
+            album = {
+                "id": q["id"],
+                "name": songs[0]["album"],
+                "artist": songs[0]["artist"],
+                "artistId": "ar1",
+                "coverArt": f"al-{q['id']}",
+                "songCount": len(songs),
+                "duration": 0,
+                "song": songs,
+            }
+            return web.json_response(ok({"album": album}))
+        if method == "getTopSongs":
+            return web.json_response(ok({"topSongs": {}}))
+        if method == "createPlaylist":
+            pid = f"pl{len(self.playlists) + 1}"
+            self.playlists[pid] = {"songs": list(multi.getall("songId", []))}
+            return web.json_response(ok({"playlist": {"id": pid, "name": q.get("name", ""), "entry": []}}))
+        if method == "getPlaylist":
+            pl = self.playlists.get(q.get("id", ""))
+            if pl is None:
+                return web.json_response(failed(70, "not found"))
+            entries = [self.songs[i] for i in pl["songs"] if i in self.songs]
+            return web.json_response(
+                ok(
+                    {
+                        "playlist": {
+                            "id": q["id"],
+                            "name": "p",
+                            "songCount": len(entries),
+                            "duration": 0,
+                            "entry": entries,
+                        }
+                    }
+                )
+            )
         if method in ("stream", "download"):
             s = self.songs.get(q.get("id", ""))
             if not s:
