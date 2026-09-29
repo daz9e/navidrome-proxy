@@ -335,6 +335,13 @@ class Store:
     def tracks_in_album(self, album_id: str) -> list[Track]:
         return [_track(r) for r in self._query("SELECT * FROM tracks WHERE album_id = ?", (album_id,))]
 
+    def ready_track_by_artist_id(self, artist_id: str) -> Track | None:
+        rows = self._query(
+            "SELECT * FROM tracks WHERE status = 'ready' AND json_extract(meta, '$.artist_id') = ? LIMIT 1",
+            (artist_id,),
+        )
+        return _track(rows[0]) if rows else None
+
     def tracks_with_status(self, *statuses: str) -> list[Track]:
         marks = ",".join("?" * len(statuses))
         return [_track(r) for r in self._query(f"SELECT * FROM tracks WHERE status IN ({marks})", statuses)]
