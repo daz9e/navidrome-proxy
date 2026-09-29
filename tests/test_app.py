@@ -78,6 +78,23 @@ async def test_search_returns_catalog_albums_and_artists(world):
     assert [a["id"] for a in root["searchResult3"]["artist"]] == ["deezer-artist:1"]
 
 
+async def test_search_drops_external_twins_of_local_songs_with_other_spelling(world):
+    world.navidrome.songs["L1"] = song("L1", "Hella Quality", "ТВЕТ", duration=30)
+    world.finder.ytmusic_rows = [
+        {
+            "video_id": "AAAAAAAAAAA",
+            "title": "Hella Quality",
+            "artists": ["TVETH"],
+            "duration": 31,
+            "album": None,
+            "thumbnail": None,
+            "explicit": False,
+        }
+    ]
+    root = await world.json("search3", "query=hella%20quality&songCount=50&albumCount=0&artistCount=0")
+    assert [x["id"] for x in root["searchResult3"]["song"]] == ["L1"]
+
+
 async def test_search_pagination_ends_instead_of_repeating_external_results(world):
     for i in range(3):
         world.navidrome.songs[f"L{i}"] = song(f"L{i}", f"Hella Quality {i}", "Local")

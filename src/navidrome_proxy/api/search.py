@@ -271,14 +271,20 @@ async def _merge(
     # Local first, then the best catalog hit, then YouTube-only songs, then the rest.
     ordered = deezer_ids[:1] + youtube_ids + soundcloud_ids + deezer_ids[1:]
     presented = await s.catalog.present(ordered, call.params.credentials(), exclude_local=local_ids)
+    local_shapes = [(matching.base_title(x.get("title")), int(x.get("duration") or 0)) for x in local_songs]
+
+    def duplicate_of_local(x: dict) -> bool:
+        if recording_key(x.get("artist"), x.get("title")) in local_keys:
+            return True
+        # Same title and length but the artist spelled differently (transliteration).
+        title, length = matching.base_title(x.get("title")), int(x.get("duration") or 0)
+        return any(title == t and length and abs(length - d) <= 2 for t, d in local_shapes)
+
     external_songs = [
         x
         for x in presented
         if str(x.get("id")) not in local_ids
-        and (
-            ids.parse(str(x.get("id"))) is None
-            or recording_key(x.get("artist"), x.get("title")) not in local_keys
-        )
+        and (ids.parse(str(x.get("id"))) is None or not duplicate_of_local(x))
     ]
     songs = local_songs + external_songs if song_count else []
 
