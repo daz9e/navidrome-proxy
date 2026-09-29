@@ -26,7 +26,7 @@ class FakeFinder:
 
     async def find(self, wanted, exclude=None):
         self.calls += 1
-        return list(self.candidates)
+        return [c for c in self.candidates if c.ref not in (exclude or ())]
 
 
 class FakeDownloads:
@@ -41,6 +41,8 @@ class FakeDownloads:
         length = self.lengths[cand.ref]
         if length is None:
             raise sources.SourceError("HTTP Error 403", transient=True)
+        if length == "age":
+            raise sources.SourceError("Sign in to confirm your age", transient=False)
         return make(dest / "source.m4a", length, dash=True)
 
 
@@ -134,6 +136,19 @@ async def test_all_candidates_failing_transiently_is_retryable(world):
     with pytest.raises(sources.SourceError) as exc:
         await pipeline.download("deezer:1")
     assert exc.value.transient
+
+
+async def test_permanent_failures_trigger_a_second_search(world):
+    store, build, _ = world
+    store.remember_track("deezer:1", {"title": "Hella Quality", "artist": "TVETH", "duration": 30})
+    pipeline, finder, downloads = build(
+        [cand("AAAAAAAAAAA"), cand("BBBBBBBBBBB"), cand("CCCCCCCCCCC"), cand("DDDDDDDDDDD", "soundcloud")],
+        {"AAAAAAAAAAA": "age", "BBBBBBBBBBB": "age", "CCCCCCCCCCC": "age", "DDDDDDDDDDD": 30},
+    )
+    track = await pipeline.download("deezer:1")
+    assert finder.calls == 2
+    assert downloads.fetched[-1] == "DDDDDDDDDDD"
+    assert track.source_ref == "DDDDDDDDDDD"
 
 
 async def test_no_candidates_is_permanent(world):

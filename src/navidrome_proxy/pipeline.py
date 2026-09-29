@@ -126,14 +126,21 @@ class Pipeline:
                 return known
 
         errors: list[sources.SourceError] = []
-        for cand in candidates[:3]:
-            try:
-                return await self._fetch(track, meta, cand, cancel)
-            except sources.Cancelled:
-                raise
-            except sources.SourceError as exc:
-                log.warning("%s: %s candidate %s failed: %s", track_id, cand.source, cand.ref, exc)
-                errors.append(exc)
+        tried: set[str] = set()
+        for round_ in range(2):
+            for cand in candidates[:3]:
+                tried.add(cand.ref)
+                try:
+                    return await self._fetch(track, meta, cand, cancel)
+                except sources.Cancelled:
+                    raise
+                except sources.SourceError as exc:
+                    log.warning("%s: %s candidate %s failed: %s", track_id, cand.source, cand.ref, exc)
+                    errors.append(exc)
+            # Age-gated or DRM results on YouTube Music: look again on YouTube and SoundCloud.
+            if round_ or direct or any(e.transient for e in errors):
+                break
+            candidates = await self.finder.find(wanted, exclude=tried)
         transient = any(e.transient for e in errors)
         raise sources.SourceError("; ".join(str(e) for e in errors)[-800:], transient=transient)
 
