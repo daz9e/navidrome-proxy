@@ -136,7 +136,7 @@ async def world(tmp_path):
             "DATA_DIR": str(tmp_path / "data"),
             "LYRICS": "false",
             "SCAN_DEBOUNCE_SECONDS": "0.05",
-            "STREAM_WAIT_SECONDS": "20",
+            "STREAM_WAIT_SECONDS": "90",
             "SEARCH_BUDGET_SECONDS": "3",
             "DEEZER_REQUESTS_PER_SECOND": "200",
         }

@@ -141,7 +141,7 @@ async def test_virtual_album_and_artist(world):
 async def test_first_play_downloads_then_streams_with_ranges(world):
     world.finder.results["Hella Quality"] = [candidate("dEvrb6N70kA", "Hella Quality")]
     resp = await world.get("stream", "id=deezer:1001", headers={"Range": "bytes=0-1"})
-    assert resp.status == 206
+    assert resp.status == 206, await resp.text()
     assert resp.headers["Content-Range"].startswith("bytes 0-1/")
     assert resp.headers["Content-Type"] == "audio/mp4"
     total = int(resp.headers["Content-Range"].rsplit("/", 1)[1])
