@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from . import audio, ids, matching, tagging
+from .covers import Covers, is_complete_image
 from .db import Store
 from .identity import Identity
 from .library import Library, relative_path, track_id_from_path
@@ -230,4 +231,37 @@ async def remux_dash(music_dir: Path, dry_run: bool = False, concurrency: int = 
 
     paths = [p for p in music_dir.rglob("*.m4a") if ".navidrome-proxy-staging" not in p.parts]
     await asyncio.gather(*(one(p) for p in paths))
+    return stats
+
+
+async def repair_covers(
+    store: Store, music_dir: Path, covers: Covers, dry_run: bool = False
+) -> dict[str, int]:
+    """Re-embed artwork in files whose cover is truncated (or missing) from the catalog."""
+    stats = {"checked": 0, "broken": 0, "repaired": 0, "unresolved": 0}
+    for path in sorted(music_dir.rglob("*")):
+        if path.suffix.lower() not in (".m4a", ".mp3") or ".navidrome-proxy-staging" in path.parts:
+            continue
+        stats["checked"] += 1
+        try:
+            current = await asyncio.to_thread(tagging.embedded_cover, path)
+        except Exception as exc:
+            log.warning("cannot read %s: %s", path, exc)
+            continue
+        if current is not None and is_complete_image(current):
+            continue
+        stats["broken"] += 1
+        track_id = track_id_from_path(path)
+        track = store.get_track(track_id) if track_id else None
+        url = track.meta.get("cover") if track is not None else None
+        if not url and track_id and track_id.startswith("yt:"):
+            url = f"https://i.ytimg.com/vi/{track_id[3:]}/hqdefault.jpg"
+        found = await covers.get(url) if url else None
+        if found is None:
+            stats["unresolved"] += 1
+            log.warning("no cover for %s", path)
+            continue
+        if not dry_run:
+            await asyncio.to_thread(tagging.set_cover, path, found[0])
+        stats["repaired"] += 1
     return stats

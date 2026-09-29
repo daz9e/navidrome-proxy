@@ -103,6 +103,36 @@ def write_tags(path: Path, meta: dict[str, Any], cover: bytes | None = None) -> 
     raise ValueError(f"cannot tag {suffix} files")
 
 
+def embedded_cover(path: Path) -> bytes | None:
+    audio = mutagen.File(str(path))
+    if audio is None or audio.tags is None:
+        return None
+    if isinstance(audio, MP4):
+        covers = audio.tags.get("covr")
+        return bytes(covers[0]) if covers else None
+    pictures = audio.tags.getall("APIC") if hasattr(audio.tags, "getall") else []
+    return bytes(pictures[0].data) if pictures else None
+
+
+def set_cover(path: Path, cover: bytes) -> None:
+    """Replace only the embedded artwork, leaving every other tag as it is."""
+    audio = mutagen.File(str(path))
+    if audio is None:
+        raise ValueError(f"unsupported file {path}")
+    if audio.tags is None:
+        audio.add_tags()
+    png = cover.startswith(b"\x89PNG")
+    if isinstance(audio, MP4):
+        fmt = MP4Cover.FORMAT_PNG if png else MP4Cover.FORMAT_JPEG
+        audio.tags["covr"] = [MP4Cover(cover, imageformat=fmt)]
+        audio.save()
+        return
+    audio.tags.delall("APIC")
+    mime = "image/png" if png else "image/jpeg"
+    audio.tags.add(APIC(encoding=3, mime=mime, type=3, desc="Cover", data=cover))
+    audio.save(v2_version=3)
+
+
 def read_tags(path: Path) -> dict[str, Any]:
     """Easy-mode tag view, used by tests and the migration tool."""
     audio = mutagen.File(str(path), easy=True)

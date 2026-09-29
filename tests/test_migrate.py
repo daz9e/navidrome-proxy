@@ -94,3 +94,38 @@ async def test_remux_dash(legacy):
     assert stats == {"checked": 2, "remuxed": 1, "failed": 0}
     assert (await audio.probe(music / "deezer-111.m4a")).brand != "dash"
     assert tagging.read_tags(music / "deezer-111.m4a")["title"] == ["Old Song"]  # tags survive
+
+
+async def test_repair_covers_reembeds_truncated_artwork(tmp_path):
+    from aiohttp import web
+    from aiohttp.test_utils import TestServer
+
+    from navidrome_proxy.covers import Covers
+
+    full = b"\xff\xd8\xff\xe0" + b"x" * 5000 + b"\xff\xd9"
+    app = web.Application()
+    app.router.add_get("/c.jpg", lambda _: web.Response(body=full, content_type="image/jpeg"))
+    server = TestServer(app)
+    await server.start_server()
+    covers = Covers(tmp_path / "covers")
+    await covers.start()
+    music = tmp_path / "music"
+    (music / "TVETH" / "RAW").mkdir(parents=True)
+    song = make(music / "TVETH" / "RAW" / "1-02 - Old Song [deezer-111].m4a", 5)
+    tagging.write_tags(song, {"title": "Old Song", "artist": "TVETH"}, cover=full[:1378])
+    fine = make(music / "TVETH" / "RAW" / "1-03 - Other [deezer-112].m4a", 5)
+    tagging.write_tags(fine, {"title": "Other", "artist": "TVETH"}, cover=full)
+    store = Store(tmp_path / "db.sqlite3")
+    store.remember_track("deezer:111", {"title": "Old Song", "cover": str(server.make_url("/c.jpg"))})
+    try:
+        dry = await migrate.repair_covers(store, music, covers, dry_run=True)
+        assert dry == {"checked": 2, "broken": 1, "repaired": 1, "unresolved": 0}
+        assert tagging.embedded_cover(song) == full[:1378]
+        await migrate.repair_covers(store, music, covers)
+        assert tagging.embedded_cover(song) == full
+        assert tagging.read_tags(song)["title"] == ["Old Song"]
+        assert (await migrate.repair_covers(store, music, covers))["broken"] == 0
+    finally:
+        store.close()
+        await covers.close()
+        await server.close()

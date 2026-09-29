@@ -37,6 +37,8 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("check-db", help="full integrity check of the state database")
     remux = sub.add_parser("remux-dash", help="losslessly fix DASH-fragmented m4a files")
     remux.add_argument("--dry-run", action="store_true")
+    repair = sub.add_parser("repair-covers", help="re-embed truncated or missing artwork")
+    repair.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
     settings = Settings.from_env()
     configure_logging(settings.log_level)
@@ -67,11 +69,25 @@ def main(argv: list[str] | None = None) -> None:
             result = {"ok": not problems, "problems": problems[:20]}
         elif args.command == "relayout":
             result = migrate.relayout(store, settings.music_dir, dry_run=args.dry_run)
+        elif args.command == "repair-covers":
+            result = asyncio.run(_repair_covers(store, settings, args.dry_run))
         else:
             result = asyncio.run(migrate.remux_dash(settings.music_dir, dry_run=args.dry_run))
     finally:
         store.close()
     print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+async def _repair_covers(store, settings: Settings, dry_run: bool) -> dict[str, int]:
+    from . import migrate
+    from .covers import Covers
+
+    covers = Covers(settings.cache_dir / "covers")
+    await covers.start()
+    try:
+        return await migrate.repair_covers(store, settings.music_dir, covers, dry_run=dry_run)
+    finally:
+        await covers.close()
 
 
 if __name__ == "__main__":
