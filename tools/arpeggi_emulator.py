@@ -360,6 +360,10 @@ def main() -> int:
     parser.add_argument("--star", action="store_true", help="also like the first played song")
     parser.add_argument("--json", type=Path, help="write the report here")
     args = parser.parse_args()
+    # Like the app itself; CDNs in front of a server often block Python's default agent.
+    opener = urllib.request.build_opener()
+    opener.addheaders = [("User-Agent", "Arpeggi/1.0 CFNetwork/3826.500.131 Darwin/25.0.0")]
+    urllib.request.install_opener(opener)
     emu = Emulator(args.url, args.user, args.password)
     emu.launch()
     emu.library_sync()
