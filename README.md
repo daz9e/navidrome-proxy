@@ -1,163 +1,45 @@
 # navidrome-proxy
 
-OpenSubsonic-прокси перед [Navidrome](https://www.navidrome.org/), который превращает
-собственную библиотеку и внешний каталог в одну музыкальную коллекцию. Клиент
-(Arpeggi, Substreamer, Symfonium, веб-интерфейс Navidrome) подключается к прокси
-как к обычному Navidrome и ничего не знает о «внешнем»: в поиске есть всё, а то,
-что вы слушаете, лайкаете или кладёте в плейлист, скачивается в библиотеку.
+An OpenSubsonic proxy in front of Navidrome. Clients (Arpeggi or any other) connect to it
+as if it were Navidrome. Search covers all music, and whatever you play, like or add to a
+playlist is downloaded into your library.
 
-```
-клиент ──► navidrome-proxy :8084 ──► Navidrome ──► /music
-                 ├─ Deezer API          каталог и метаданные
-                 ├─ YouTube Music       основной источник аудио (официальные загрузки)
-                 ├─ YouTube, SoundCloud запасные источники
-                 ├─ slskd (Soulseek)    апгрейд качества лайкнутых треков
-                 └─ lrclib              тексты песен
-```
+- **Search:** your library + Deezer + YouTube Music. Searching never downloads anything.
+- **Play / like / playlist:** the track is fetched from YouTube Music (YouTube and
+  SoundCloud as fallbacks), tagged with Deezer metadata and indexed by Navidrome. Likes,
+  playlist additions and scrobbles end up in Navidrome itself.
+- **One song, one id:** once downloaded, the Navidrome song is shown everywhere. Albums
+  don't split, and local albums are completed with their missing tracks.
+- **Queue:** plays and likes skip the queue; background work runs 5 at a time.
+- **Quality:** liked tracks are upgraded from Soulseek, but only when the audio
+  fingerprint matches the original (no instrumental "minus" versions).
+- **List import** of `Artist - Title` lines: `/proxy/import`.
 
-## Как это работает
-
-**Одна песня — один ID.** Пока трека нет в библиотеке, он виден под виртуальным
-ID (`deezer:<id>`, `yt:<id>`, `sc:<id>`). Как только файл скачан и Navidrome его
-проиндексировал, прокси везде показывает *настоящую песню Navidrome*: в поиске,
-альбомах, лайках. Виртуальный ID остаётся вечным алиасом, поэтому старые ссылки
-в кэше и очереди клиента продолжают работать.
-
-**Одна запись — один файл.** Слой идентичности связывает Deezer-трек, видео
-YouTube, загрузку SoundCloud и ISRC одной и той же записи, плюс ключ
-«артист + название без feat/скобок + длительность ±3 с». Трек, найденный
-позже в другом каталоге или под другим названием, не скачивается второй раз.
-
-**Один альбом.** Все треки альбома получают одинаковые канонические теги из Deezer,
-поэтому Navidrome собирает их в один альбом. Внешний альбом показывает уже
-скачанные треки как локальные. Локальный альбом дополняется недостающими треками
-из каталога (виртуальными, в правильном порядке). Страница артиста дополняется
-альбомами, которых ещё нет.
-
-**Что делают действия пользователя**
-
-| Действие | Что происходит |
-|---|---|
-| Поиск | Navidrome + Deezer (треки/альбомы/артисты) + YouTube Music параллельно, с бюджетом по времени. Ничего не скачивает. Пагинация корректная: внешние результаты только на первой странице. |
-| Play | Скачивание в приоритетной полосе, отдача файла с HTTP Range. Следующие 2 трека альбома префетчатся. |
-| Лайк | Приоритетная загрузка, лайк сразу виден в «Избранном», после индексации ставится в самом Navidrome. Затем фоновый апгрейд качества через Soulseek. |
-| Лайк альбома | Все треки в фоновую очередь, лайк альбома в Navidrome после индексации. |
-| Добавить в плейлист | Скачивание; трек появляется в плейлисте Navidrome после индексации. |
-| Скроббл | Для ещё не скачанного трека откладывается и доставляется после индексации. |
-
-**Очередь.** Приоритетная полоса (play, лайки, префетч) стартует сразу и никогда
-не ждёт фоновые задачи. Фоновая полоса (импорт, лайки альбомов, апгрейды) — ровно
-`BACKGROUND_WORKERS` (по умолчанию 5) одновременно. Одна задача на трек, ретраи
-с backoff 15 с → 1 ч только для временных ошибок, очередь переживает рестарт.
-
-**Качество и защита библиотеки.**
-- Кандидат-источник жёстко отбраковывается при неверной длительности или
-  маркере другой версии, которой нет в запросе: минус/instrumental, karaoke,
-  sped up/slowed, remix, live, cover.
-- Каждый файл пересобирается ffmpeg в обычный MP4 с `faststart`. YouTube отдаёт
-  фрагментированный DASH, и AVFoundation (Arpeggi) видит такую длительность
-  вдвое больше: трек «уходил в минус» и очередь не переключалась.
-- Чужие теги вычищаются, пишутся только канонические: `ARTIST` для отображения
-  и мультизначный `ARTISTS`, чтобы коллаборации были у каждого артиста.
-- Апгрейд из Soulseek принимается только если отпечаток Chromaprint совпадает с
-  уже скачанным файлом (порог 0.88). Проверено на реальном случае
-  «FORTUNA 812 — Black Water»: оригинал в другом кодировании даёт 0.95–0.99,
-  минус — 0.76.
-
-**Раскладка файлов**
-
-```
-/music/<исполнитель альбома>/<альбом>/<диск>-<номер> - <название> [deezer-<id>].m4a
-/music/<исполнитель>/YouTube/<название> [yt-<id>].m4a
-```
-
-Библиотека читается и без прокси (Plex/Jellyfin, папки). Токен `[deezer-<id>]`
-связывает файл с каталогом. Песня в Navidrome находится по точному размеру файла:
-Navidrome не отдаёт реальные пути, и старый прокси из-за этого часто не мог найти
-только что скачанный трек.
-
-## Импорт списков
-
-Страница `https://<прокси>/proxy/import` или API:
-
-```bash
-curl -X POST "http://pi:8084/proxy/v1/imports?u=USER&p=PASS&playlist=Мой%20плейлист" \
-     -H 'Content-Type: text/plain' --data-binary @tracks.txt
-curl "http://pi:8084/proxy/v1/imports/<id>?u=USER&p=PASS"
-```
-
-Строка — `Исполнитель - Название`, можно с номером, `[альбомом]` и `(3:07)`.
-Кандидаты Deezer оцениваются по полным кредитам (коллаборации «TVETH, BATO» больше
-не теряются):
-- название +40, все артисты +35, альбом +15, длительность ±3 с +10, ISRC — точное
-  совпадение;
-- штрафы за remix/live/sped up и за сингл вместо альбомной версии.
-
-Уверенный матч помечается `matched`. Если уверенного нет, берётся лучший кандидат
-с пометкой `fallback`. Если Deezer трек не знает, ищутся YouTube Music и SoundCloud.
-Найденное лайкается пользователю и качается в фоне. Плейлист, если указан,
-собирается в исходном порядке.
-
-## Установка
+## Run
 
 ```bash
 docker compose up -d --build
 ```
 
-Переменные окружения (`compose.yml`, секреты — в `proxy.env`):
+Main settings: `NAVIDROME_URL`, `MUSIC_DIR` (the folder Navidrome scans), `DATA_DIR`,
+`SLSKD_URL` / `SLSKD_API_KEY`, `BACKGROUND_WORKERS` (5). All options:
+`src/navidrome_proxy/config.py`.
 
-| Переменная | По умолчанию | |
-|---|---|---|
-| `NAVIDROME_URL` | `http://127.0.0.1:4533` | адрес Navidrome |
-| `MUSIC_DIR` | `/music` | та же папка, что сканирует Navidrome |
-| `DATA_DIR` | `/data` | SQLite и кэш обложек |
-| `NAVIDROME_USER` / `NAVIDROME_PASSWORD` | — | админ для `startScan` в фоне (необязательно) |
-| `SLSKD_URL` / `SLSKD_API_KEY` / `SLSKD_DOWNLOADS_DIR` | — | апгрейды из Soulseek |
-| `BACKGROUND_WORKERS` | `5` | фоновые загрузки одновременно |
-| `PREFETCH_NEXT_TRACKS` | `2` | префетч альбома при воспроизведении |
-| `STREAM_WAIT_SECONDS` | `120` | сколько play ждёт загрузку |
-| `COMPLETE_LOCAL_ALBUMS` | `true` | дополнять локальные альбомы и артистов |
-| `SEARCH_BUDGET_SECONDS` | `4` | потолок ожидания внешнего поиска |
-| `YTDLP_AUTO_UPDATE` | `1` | обновлять yt-dlp при старте контейнера |
-
-Пароли клиентов нигде не сохраняются. Прокси проверяет учётные данные через Navidrome
-и держит их только в памяти, чтобы донести отложенный лайк после скачивания.
-
-### Переход со старого прокси
+Migrating from the first proxy:
 
 ```bash
 docker compose run --rm navidrome-proxy migrate-legacy --state /data/legacy-state.json
-docker compose run --rm navidrome-proxy remux-dash          # --dry-run сначала
-docker compose run --rm navidrome-proxy relayout            # --dry-run сначала
+docker compose run --rm navidrome-proxy remux-dash --dry-run   # fix DASH-fragmented files
+docker compose run --rm navidrome-proxy relayout --dry-run     # Artist/Album folder layout
 ```
 
-`migrate-legacy` усыновляет файлы `deezer-<id>.*` и `state.json`: ID Navidrome,
-отложенные лайки. Недокачанные лайкнутые треки снова ставятся в очередь, а строки
-старых импортов без каталожного ID превращаются в новый импорт.
-
-`remux-dash` и `relayout` не меняют ID песен в Navidrome, поэтому лайки и счётчики
-прослушиваний сохраняются. Это покрыто интеграционным тестом на Navidrome 0.63.2.
-
-## Разработка и тесты
+## Tests
 
 ```bash
-uv sync
-uv run pytest                   # юнит- и сквозные тесты (фейковые Navidrome/Deezer, настоящие ffmpeg и теги)
-uv run pytest -m integration    # настоящий Navidrome 0.63.2 в Docker
-uv run pytest -m network        # реальные YouTube Music/SoundCloud
+uv run pytest                  # unit and end-to-end
+uv run pytest -m integration   # real Navidrome in Docker
+uv run pytest -m network       # real YouTube Music / SoundCloud
+uv run python tools/arpeggi_emulator.py --url http://host:8084 --user U --password P --query "..."
 ```
 
-Клиентские проверки:
-
-- `tools/arpeggi_emulator.py` — воспроизводит реальные последовательности запросов
-  Arpeggi из прод-логов: старт, синхронизация, набор поиска, пагинация
-  `songCount=2000`, стрим как AVPlayer (`bytes=0-1`, потом остальное), скробблы,
-  лайк. Каждый объект сверяется со схемой Navidrome 0.63, как это сделал бы
-  Swift `Codable`.
-- `tools/avplayer/main.swift` — `AVQueuePlayer` (движок Arpeggi на iOS и macOS):
-  проверяет длительность, доигрывание трека до конца и переход к следующему.
-
-```bash
-swiftc -O tools/avplayer/main.swift -o tools/avplayer/avplayer-check
-tools/avplayer/avplayer-check "<stream url 1>" "<stream url 2>" <ожидаемая длительность>
-```
+`tools/avplayer` checks playback with AVQueuePlayer, the engine Arpeggi uses.
