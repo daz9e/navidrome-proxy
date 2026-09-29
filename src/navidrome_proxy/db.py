@@ -610,7 +610,7 @@ class Store:
             c.execute(
                 "INSERT INTO imports(id, username, status, options, rows, created_at, updated_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET status = excluded.status, "
-                "rows = excluded.rows, updated_at = excluded.updated_at",
+                "options = excluded.options, rows = excluded.rows, updated_at = excluded.updated_at",
                 (
                     import_id,
                     username,
@@ -642,6 +642,10 @@ class Store:
             "SELECT id FROM imports WHERE username = ? ORDER BY created_at DESC LIMIT ?", (username, limit)
         )
         return [imp for r in rows if (imp := self.get_import(r["id"])) is not None]
+
+    def imports_with_playlist(self) -> list[str]:
+        rows = self._query("SELECT id FROM imports WHERE json_extract(options, '$.playlist') IS NOT NULL")
+        return [r["id"] for r in rows]
 
     def unfinished_imports(self) -> list[dict]:
         rows = self._query(
