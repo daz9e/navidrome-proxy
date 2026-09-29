@@ -213,23 +213,30 @@ def remember_soundcloud(s: Services, rows: list[dict]) -> list[str]:
     return [track_id for track_id, _ in items]
 
 
-def _relevant(query: str, rows: list[dict], fields) -> list[dict]:
+def _relevant(query: str, rows: list[dict], fields, strict: bool = False) -> list[dict]:
     """Re-rank catalog hits by how much of the query they contain; drop unrelated ones.
 
     Deezer's own ranking is popularity-driven: "юпи порезы" returned an unrelated
-    popular song first and the right track sixth.
+    popular song first and the right track sixth. ``fields`` returns
+    (artist, title, album); artist+title coverage outranks coverage through the
+    album name (tribute albums), and ``strict`` requires full artist+title coverage.
     """
     if PREFIX.match(query) or YOUTUBE_URL.search(query):
         return rows
-    scored = [(matching.relevance(query, *fields(r)), i, r) for i, r in enumerate(rows)]
     words = len(matching.normalize(query).split())
     floor = 1.0 if words <= 2 else 0.6
-    kept = [(score, i, r) for score, i, r in scored if score >= floor]
-    if not kept:
+    kept = []
+    for index, row in enumerate(rows):
+        artist, title, album = fields(row)
+        core = matching.relevance(query, artist, title)
+        full = max(core, matching.relevance(query, artist, title, album))
+        if (core if strict else full) >= (1.0 if strict else floor):
+            kept.append((-full, -core, index, row))
+    if not kept and not strict:
         # Transliterations and typos ("zemfira"): trust the catalog's own top hits.
         return rows[:5]
-    kept.sort(key=lambda x: (-x[0], x[1]))
-    return [r for _, _, r in kept]
+    kept.sort(key=lambda x: x[:3])
+    return [row for *_, row in kept]
 
 
 # --------------------------------------------------------------------- merge
@@ -248,10 +255,15 @@ async def _merge(
         lambda r: (r.get("artist", {}).get("name"), r.get("title"), r.get("album", {}).get("title")),
     )
     external["youtube"] = _relevant(
-        query, external.get("youtube", []), lambda r: (" ".join(r["artists"]), r["title"], r.get("album"))
+        query,
+        external.get("youtube", []),
+        lambda r: (" ".join(r["artists"]), r["title"], r.get("album")),
+        strict=not only_external,
     )
     external["albums"] = _relevant(
-        query, external.get("albums", []), lambda r: ((r.get("artist") or {}).get("name"), r.get("title"))
+        query,
+        external.get("albums", []),
+        lambda r: ((r.get("artist") or {}).get("name"), r.get("title"), None),
     )
     external["tracks"] = tracks
     deezer_ids = s.catalog.remember_deezer(tracks)
