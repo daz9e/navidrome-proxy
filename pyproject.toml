@@ -20,6 +20,7 @@ dev = [
     "pytest>=8",
     "pytest-aiohttp>=1.1.1",
     "pytest-asyncio>=0.24",
+    "pytest-timeout>=2.4.0",
     "ruff>=0.6",
 ]
 
@@ -48,3 +49,6 @@ src = ["src", "tests"]
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "ASYNC", "RUF"]
 ignore = ["RUF001", "RUF002", "RUF003", "SIM105", "ASYNC109", "RUF005", "ASYNC240"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["RUF059", "E501"]
