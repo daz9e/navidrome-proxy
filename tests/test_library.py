@@ -107,14 +107,19 @@ async def test_indexer_scans_once_and_maps_by_file_name(env):
     async def on_mapped(track):
         mapped.append((track.id, track.local_id))
 
+    music = store.path.parent / "music"
+    music.mkdir()
     for i in (1, 2):
+        f = music / f"deezer-{i}.m4a"
+        f.write_bytes(b"x" * (1000 + i))
         store.remember_track(f"deezer:{i}", {"title": "Same Title", "artists": ["A"], "duration": 200})
-        store.update_track(f"deezer:{i}", status="ready", file=f"/music/deezer-{i}.m4a")
+        store.update_track(f"deezer:{i}", status="ready", file=str(f))
 
     def scan(fake):
-        # Two songs with the same title: only the file name tells them apart.
-        fake.songs["L1"] = song("L1", "Same Title", "A", path="A/X/1-01 - Same Title [deezer-1].m4a")
-        fake.songs["L2"] = song("L2", "Same Title", "A", path="deezer-2.m4a")  # legacy flat name
+        # Same title and a synthetic path (Navidrome hides real paths): the exact
+        # byte size is what tells the two files apart.
+        fake.songs["L1"] = song("L1", "Same Title", "A", path="A/Album/01-01 - Same Title.m4a", size=1001)
+        fake.songs["L2"] = song("L2", "Same Title", "A", path="A/Album/01-01 - Same Title.m4a", size=1002)
 
     fake.on_scan = scan
     creds = Params.parse("u=alice&p=alicepw")

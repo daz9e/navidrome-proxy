@@ -254,33 +254,50 @@ class Indexer:
         return resolved
 
     async def find_local_id(self, track: Track, creds: Params) -> str | None:
+        """Find the Navidrome song of a downloaded file.
+
+        Navidrome does not report real file paths by default (``path`` is rebuilt
+        from tags), so the file name cannot be used. The exact byte size of the file
+        we wrote is: title + size identifies the song unambiguously.
+        """
         if not track.file:
             return None
-        name = Path(track.file).name
+        try:
+            size = Path(track.file).stat().st_size
+        except OSError:
+            return None
         token = file_stem(track.id)
-        queries = [f"{track.title} {track.artists[0] if track.artists else ''}".strip(), track.title]
+        queries = [track.title, f"{track.title} {track.artists[0] if track.artists else ''}".strip()]
         for query in dict.fromkeys(q for q in queries if q):
             try:
                 root = await self.navidrome.call(
-                    "search3", creds, query=query, songCount="50", albumCount="0", artistCount="0", timeout=20
+                    "search3",
+                    creds,
+                    query=query,
+                    songCount="100",
+                    albumCount="0",
+                    artistCount="0",
+                    timeout=20,
                 )
             except (UpstreamError, UpstreamUnavailable) as exc:
                 log.debug("local id lookup failed for %s: %s", track.id, exc)
                 return None
             songs = (root.get("searchResult3") or {}).get("song") or []
+            by_size = [s for s in songs if int(s.get("size") or -1) == size]
+            if len(by_size) == 1:
+                return str(by_size[0]["id"])
+            # Real paths are reported when the player is configured to do so.
             for song in songs:
                 base = str(song.get("path", "")).rsplit("/", 1)[-1]
-                if base == name or f"[{token}]" in base:
+                if f"[{token}]" in base or base == Path(track.file).name:
                     return str(song["id"])
-            # Navidrome can hide paths; fall back to an unambiguous title/artist match.
+            duration = float(track.audio.get("duration") or track.duration)
             exact = [
                 s
-                for s in songs
+                for s in (by_size or songs)
                 if matching.normalize(s.get("title")) == matching.normalize(track.title)
-                and matching.artists_match(track.artists[:1], s.get("artist") or "") == 1.0
-                and abs(float(s.get("duration") or 0) - float(track.audio.get("duration") or track.duration))
-                <= 2
-                and not s.get("path")
+                and matching.normalize(s.get("album")) == matching.normalize(track.meta.get("album"))
+                and abs(float(s.get("duration") or 0) - duration) <= 2
             ]
             if len(exact) == 1:
                 return str(exact[0]["id"])
