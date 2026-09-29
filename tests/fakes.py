@@ -191,7 +191,7 @@ class FakeNavidrome:
         if method == "getTopSongs":
             return web.json_response(ok({"topSongs": {}}))
         if method == "createPlaylist":
-            pid = f"pl{len(self.playlists) + 1}"
+            pid = q.get("playlistId") or f"pl{len(self.playlists) + 1}"
             self.playlists[pid] = {"songs": list(multi.getall("songId", []))}
             return web.json_response(ok({"playlist": {"id": pid, "name": q.get("name", ""), "entry": []}}))
         if method == "getPlaylist":

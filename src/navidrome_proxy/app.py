@@ -92,6 +92,9 @@ def build_services(settings: Settings, **overrides) -> Services:
         intents,
     )
     services.extra["background_credentials"] = background_credentials
+    from .imports import Importer
+
+    services.extra["importer"] = Importer(store, identity, catalog, deezer, finder, scheduler, navidrome)
     if overrides.get("upgrader") is not None:
         services.extra["upgrader"] = overrides["upgrader"]
     elif settings.slskd_enabled and settings.slskd_upgrades:
@@ -136,11 +139,13 @@ async def _on_startup(app: web.Application) -> None:
     s.store.cache_purge_expired()
     s.indexer.start()
     s.scheduler.start()
+    s.extra["importer"].start()
     s.indexer.notify()
 
 
 async def _on_cleanup(app: web.Application) -> None:
     s = app[SERVICES]
+    await s.extra["importer"].stop()
     await s.scheduler.stop()
     await s.indexer.stop()
     await s.covers.close()

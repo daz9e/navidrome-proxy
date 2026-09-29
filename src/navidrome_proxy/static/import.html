@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Импорт треков</title>
+<style>
+  :root { --bg:#f6f6f4; --fg:#1b1b1b; --muted:#6b6b6b; --card:#fff; --line:#e3e3df; --accent:#2f6fde; --ok:#1f8a4c; --warn:#b7791f; --bad:#c0392b; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#141414; --fg:#eaeaea; --muted:#9a9a9a; --card:#1e1e1e; --line:#2c2c2c; --accent:#6a9bff; } }
+  * { box-sizing:border-box }
+  body { margin:0; font:15px/1.45 -apple-system, system-ui, sans-serif; background:var(--bg); color:var(--fg); }
+  main { max-width:760px; margin:0 auto; padding:16px; }
+  h1 { font-size:20px; margin:8px 0 16px }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:16px }
+  label { display:block; font-size:13px; color:var(--muted); margin:10px 0 4px }
+  input[type=text], input[type=password], textarea { width:100%; padding:10px; border:1px solid var(--line); border-radius:8px; background:transparent; color:inherit; font:inherit }
+  textarea { min-height:200px; font-family:ui-monospace, monospace; font-size:13px }
+  .row { display:flex; gap:12px; flex-wrap:wrap } .row > div { flex:1 1 200px }
+  button { margin-top:14px; padding:10px 18px; border:0; border-radius:8px; background:var(--accent); color:#fff; font:inherit; cursor:pointer }
+  button:disabled { opacity:.5 }
+  .muted { color:var(--muted); font-size:13px }
+  .bar { height:8px; background:var(--line); border-radius:4px; overflow:hidden; margin:8px 0 }
+  .bar > div { height:100%; background:var(--accent); width:0 }
+  table { width:100%; border-collapse:collapse; font-size:13px } td { padding:6px 4px; border-top:1px solid var(--line); vertical-align:top }
+  .matched, .matched_youtube, .matched_soundcloud { color:var(--ok) } .fallback { color:var(--warn) } .not_found, .invalid, .error { color:var(--bad) }
+  .chips span { display:inline-block; margin:2px 6px 2px 0; padding:2px 8px; border-radius:10px; background:var(--line); font-size:12px }
+</style>
+</head>
+<body>
+<main>
+  <h1>Импорт треков в библиотеку</h1>
+  <div class="card">
+    <div class="row">
+      <div><label for="u">Пользователь Navidrome</label><input id="u" type="text" autocomplete="username"></div>
+      <div><label for="p">Пароль</label><input id="p" type="password" autocomplete="current-password"></div>
+    </div>
+    <label for="text">Список: по строке «Исполнитель - Название», можно с номером, [альбомом] и (3:07)</label>
+    <textarea id="text" placeholder="1. TVETH, BATO - Hella Quality&#10;Imagine Dragons - Radioactive [Night Visions]"></textarea>
+    <div class="row">
+      <div><label for="playlist">Плейлист (необязательно)</label><input id="playlist" type="text" placeholder="например: Крис — лайки"></div>
+      <div><label><input id="like" type="checkbox" checked> Лайкнуть все найденные</label></div>
+    </div>
+    <button id="go">Импортировать</button>
+    <p class="muted" id="msg"></p>
+  </div>
+  <div class="card" id="report" hidden>
+    <div><b id="state"></b> <span class="muted" id="progress"></span></div>
+    <div class="bar"><div id="fill"></div></div>
+    <div class="chips" id="chips"></div>
+    <table><tbody id="rows"></tbody></table>
+  </div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const labels = { matched:"найден", fallback:"найден (не уверен)", matched_youtube:"YouTube", matched_soundcloud:"SoundCloud",
+  not_found:"не найден", invalid:"не разобрана строка", error:"ошибка", pending:"в очереди",
+  ready:"скачан", queued:"ждёт загрузки", downloading:"качается", failed:"не скачался", new:"ждёт" };
+try { $("u").value = localStorage.getItem("np-user") || ""; } catch (e) {}
+let timer = null;
+function creds() { return "u=" + encodeURIComponent($("u").value) + "&p=" + encodeURIComponent($("p").value); }
+$("go").onclick = async () => {
+  $("go").disabled = true; $("msg").textContent = "Отправляю…";
+  try { localStorage.setItem("np-user", $("u").value); } catch (e) {}
+  const res = await fetch("../proxy/v1/imports", { method:"POST", headers:{ "Content-Type":"application/json" },
+    body: JSON.stringify({ u:$("u").value, p:$("p").value, text:$("text").value, like:$("like").checked, playlist:$("playlist").value }) });
+  const data = await res.json().catch(() => ({}));
+  $("go").disabled = false;
+  if (!res.ok) { $("msg").textContent = "Ошибка: " + (data.error || res.status); return; }
+  $("msg").textContent = "Импорт запущен: " + data.id;
+  clearInterval(timer); poll(data.id); timer = setInterval(() => poll(data.id), 3000);
+};
+async function poll(id) {
+  const res = await fetch("../proxy/v1/imports/" + id + "?" + creds());
+  if (!res.ok) return;
+  const r = await res.json();
+  $("report").hidden = false;
+  $("state").textContent = r.status === "completed" ? "Разбор списка завершён" : "Разбираю список…";
+  $("progress").textContent = r.progress.done + " / " + r.progress.total;
+  $("fill").style.width = (100 * r.progress.done / Math.max(1, r.progress.total)) + "%";
+  const chips = Object.entries(r.counts).map(([k, v]) => `<span>${labels[k] || k}: ${v}</span>`)
+    .concat(Object.entries(r.downloads).map(([k, v]) => `<span>${labels[k] || k}: ${v}</span>`));
+  $("chips").innerHTML = chips.join("");
+  $("rows").innerHTML = r.rows.map(row => {
+    const m = row.match ? `${row.match.artist} — ${row.match.title}${row.match.album ? " · " + row.match.album : ""}` : "";
+    const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+    return `<tr><td>${row.line}</td><td>${esc(row.input)}<div class="muted">${esc(m)}</div></td>` +
+      `<td class="${row.status}">${labels[row.status] || row.status}<div class="muted">${labels[row.download] || row.download || ""}</div></td></tr>`;
+  }).join("");
+  const settled = r.status === "completed" && !Object.keys(r.downloads).some(k => ["queued", "downloading", "new"].includes(k));
+  if (settled) clearInterval(timer);
+}
+</script>
+</body>
+</html>
