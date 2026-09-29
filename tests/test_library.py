@@ -46,6 +46,7 @@ def test_track_id_from_path_new_and_legacy():
     assert track_id_from_path("TVETH/RAW/1-03 - Hella Quality [deezer-1].m4a") == "deezer:1"
     assert track_id_from_path("/music/deezer-4274804272.m4a") == "deezer:4274804272"
     assert track_id_from_path("ЮПИ/YouTube/Кошмар [yt-sO4pSj466Hk].m4a") == "yt:sO4pSj466Hk"
+    assert track_id_from_path("Юпи/SoundCloud/x [sc-2398309779].m4a") == "sc:2398309779"
     assert track_id_from_path("Persona/Aria of the Soul.m4a") is None
 
 

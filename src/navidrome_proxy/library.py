@@ -36,7 +36,7 @@ from .subsonic.params import Params
 log = logging.getLogger(__name__)
 
 
-_TOKEN = re.compile(r"\[(deezer-\d+|yt-[A-Za-z0-9_-]{11})\]")
+_TOKEN = re.compile(r"\[(deezer-\d+|yt-[A-Za-z0-9_-]{11}|sc-\d+)\]")
 _LEGACY = re.compile(r"^(deezer-\d+|yt-[A-Za-z0-9_-]{11})$")
 _UNSAFE = re.compile(r'[\x00-\x1f/\\:*?"<>|]+')
 
@@ -46,7 +46,7 @@ def file_stem(track_id: str) -> str:
     vid = ids.parse(track_id)
     if vid is None or not vid.is_track:
         raise ValueError(f"not an external track id: {track_id}")
-    return f"deezer-{vid.key}" if vid.kind == "track" else f"yt-{vid.key}"
+    return {"track": "deezer", "youtube": "yt", "soundcloud": "sc"}[vid.kind] + f"-{vid.key}"
 
 
 def track_id_from_path(path: str | Path) -> str | None:
@@ -55,8 +55,8 @@ def track_id_from_path(path: str | Path) -> str | None:
     match = _TOKEN.search(stem) or _LEGACY.match(stem)
     if not match:
         return None
-    token = match.group(1)
-    return "deezer:" + token[7:] if token.startswith("deezer-") else "yt:" + token[3:]
+    prefix, _, key = match.group(1).partition("-")
+    return f"{prefix}:{key}"
 
 
 def safe_name(value: str | None, limit: int = 80, fallback: str = "Unknown") -> str:
@@ -74,8 +74,9 @@ def relative_path(track_id: str, meta: dict, suffix: str) -> Path:
     title = safe_name(meta.get("title"), 100, "Untitled")
     artists = meta.get("artists") or []
     lead = artists[0] if artists else meta.get("artist")
-    if token.startswith("yt-") and not meta.get("album"):
-        return Path(safe_name(lead)) / "YouTube" / f"{title} [{token}]{suffix}"
+    if not token.startswith("deezer-") and not meta.get("album"):
+        folder = "YouTube" if token.startswith("yt-") else "SoundCloud"
+        return Path(safe_name(lead)) / folder / f"{title} [{token}]{suffix}"
     folder = Path(safe_name(meta.get("album_artist") or lead)) / safe_name(meta.get("album"), 80, "Singles")
     track = int(meta.get("track") or 0)
     prefix = f"{int(meta.get('disc') or 1)}-{track:02d} - " if track else ""

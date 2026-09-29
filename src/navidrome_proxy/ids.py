@@ -7,6 +7,7 @@ queued likes and stored mappings survive the rewrite:
 * ``deezer-album:<album id>``   – a Deezer album
 * ``deezer-artist:<artist id>`` – a Deezer artist
 * ``yt:<video id>``             – a YouTube video used as a standalone track
+* ``sc:<track id>``             – a SoundCloud track (not in Deezer/YouTube Music)
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-Kind = Literal["track", "album", "artist", "youtube"]
+Kind = Literal["track", "album", "artist", "youtube", "soundcloud"]
 
 _YOUTUBE_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
 _NUMERIC = re.compile(r"^\d{1,20}$")
@@ -25,6 +26,7 @@ _PREFIXES: dict[str, Kind] = {
     "deezer-album:": "album",
     "deezer-artist:": "artist",
     "yt:": "youtube",
+    "sc:": "soundcloud",
 }
 
 
@@ -41,7 +43,7 @@ class VirtualId:
 
     @property
     def is_track(self) -> bool:
-        return self.kind in ("track", "youtube")
+        return self.kind in ("track", "youtube", "soundcloud")
 
 
 def parse(value: str | None) -> VirtualId | None:
@@ -49,7 +51,7 @@ def parse(value: str | None) -> VirtualId | None:
     if not value:
         return None
     # "deezer-album:" and "deezer-artist:" must be tested before "deezer:".
-    for prefix in ("deezer-album:", "deezer-artist:", "deezer:", "yt:"):
+    for prefix in ("deezer-album:", "deezer-artist:", "deezer:", "yt:", "sc:"):
         if value.startswith(prefix):
             key = value[len(prefix) :]
             kind = _PREFIXES[prefix]
@@ -76,6 +78,10 @@ def artist(deezer_id: int | str) -> str:
 
 def youtube(video_id: str) -> str:
     return f"yt:{video_id}"
+
+
+def soundcloud(track_id: int | str) -> str:
+    return f"sc:{track_id}"
 
 
 def valid_youtube_id(video_id: str) -> bool:

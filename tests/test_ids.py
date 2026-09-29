@@ -10,6 +10,7 @@ from navidrome_proxy import ids
         ("deezer-album:14652356", "album", "14652356"),
         ("deezer-artist:4050205", "artist", "4050205"),
         ("yt:sO4pSj466Hk", "youtube", "sO4pSj466Hk"),
+        ("sc:2398309779", "soundcloud", "2398309779"),
     ],
 )
 def test_parse_round_trips(raw, kind, key):

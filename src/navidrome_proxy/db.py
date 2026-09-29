@@ -46,6 +46,23 @@ CREATE INDEX IF NOT EXISTS tracks_album ON tracks(album_id);
 CREATE INDEX IF NOT EXISTS tracks_local ON tracks(local_id);
 CREATE INDEX IF NOT EXISTS tracks_status ON tracks(status);
 
+-- Other identities of the same recording: "deezer:1", "yt:abc", "sc:2", "isrc:USUM1".
+CREATE TABLE IF NOT EXISTS aliases (
+    alias TEXT PRIMARY KEY,
+    track_id TEXT NOT NULL,
+    how TEXT NOT NULL,
+    created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS aliases_track ON aliases(track_id);
+
+-- "primary artist|base title" keys, for spotting one song under different ids.
+CREATE TABLE IF NOT EXISTS recordings (
+    key TEXT NOT NULL,
+    track_id TEXT NOT NULL,
+    duration REAL NOT NULL,
+    PRIMARY KEY (key, track_id)
+);
+
 CREATE TABLE IF NOT EXISTS jobs (
     track_id TEXT NOT NULL,
     kind TEXT NOT NULL,
@@ -333,6 +350,49 @@ class Store:
         return {
             r["status"]: r["n"] for r in self._query("SELECT status, COUNT(*) n FROM tracks GROUP BY status")
         }
+
+    # --------------------------------------------------------------- aliases
+    def add_alias(self, alias: str, track_id: str, how: str) -> bool:
+        """Point ``alias`` at ``track_id``; an existing alias is never re-pointed."""
+        if alias == track_id:
+            return False
+        with self.tx() as c:
+            return (
+                c.execute(
+                    "INSERT OR IGNORE INTO aliases VALUES (?, ?, ?, ?)", (alias, track_id, how, time.time())
+                ).rowcount
+                > 0
+            )
+
+    def resolve_alias(self, alias: str) -> str | None:
+        rows = self._query("SELECT track_id FROM aliases WHERE alias = ?", (alias,))
+        return rows[0]["track_id"] if rows else None
+
+    def aliases_of(self, track_id: str) -> list[tuple[str, str]]:
+        rows = self._query(
+            "SELECT alias, how FROM aliases WHERE track_id = ? ORDER BY created_at", (track_id,)
+        )
+        return [(r["alias"], r["how"]) for r in rows]
+
+    def resolve_aliases(self, aliases: Iterable[str]) -> dict[str, str]:
+        items = list(dict.fromkeys(aliases))
+        out: dict[str, str] = {}
+        for start in range(0, len(items), 500):
+            chunk = items[start : start + 500]
+            marks = ",".join("?" * len(chunk))
+            for row in self._query(f"SELECT alias, track_id FROM aliases WHERE alias IN ({marks})", chunk):
+                out[row["alias"]] = row["track_id"]
+        return out
+
+    def add_recording(self, key: str, track_id: str, duration: float) -> None:
+        with self.tx() as c:
+            c.execute("INSERT OR REPLACE INTO recordings VALUES (?, ?, ?)", (key, track_id, duration))
+
+    def recordings(self, key: str) -> list[tuple[str, float]]:
+        return [
+            (r["track_id"], r["duration"])
+            for r in self._query("SELECT track_id, duration FROM recordings WHERE key = ?", (key,))
+        ]
 
     # ------------------------------------------------------------------ jobs
     def enqueue(
