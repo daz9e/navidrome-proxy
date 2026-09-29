@@ -89,7 +89,8 @@ async def stream(s: Services, call: Call):
         return call.error(s.navidrome.identity, sr.NOT_FOUND, "Song not found")
     if not track.is_ready:
         started = time.monotonic()
-        s.scheduler.request(track.id, PLAY, "play", fresh=track.status == "failed")
+        # An explicit play always runs now, even if a retry was scheduled for later.
+        s.scheduler.request(track.id, PLAY, "play", fresh=True)
         prefetch_next(s, track)
         ready = await s.scheduler.wait(track.id, s.settings.stream_wait_seconds)
         if ready is None:
