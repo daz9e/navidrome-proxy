@@ -46,6 +46,20 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     settings = Settings.from_env()
     configure_logging(settings.log_level)
+    if args.command == "remux-dash":  # files only: safe next to a running server
+        from . import migrate
+
+        result = asyncio.run(migrate.remux_dash(settings.music_dir, dry_run=args.dry_run))
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return None
+
+    from .db import DatabaseBusy, OwnerLock
+
+    owner = OwnerLock(settings.db_path)
+    try:
+        owner.acquire()
+    except DatabaseBusy as exc:
+        sys.exit(f"navidrome-proxy: {exc}")
     if args.command in (None, "serve"):
         from .app import create_app
 
@@ -75,10 +89,8 @@ def main(argv: list[str] | None = None) -> None:
             result = migrate.relayout(store, settings.music_dir, dry_run=args.dry_run)
         elif args.command == "adopt-youtube-fallbacks":
             result = asyncio.run(_adopt_youtube_fallbacks(store, settings, args.dry_run))
-        elif args.command == "repair-covers":
-            result = asyncio.run(_repair_covers(store, settings, args.dry_run))
         else:
-            result = asyncio.run(migrate.remux_dash(settings.music_dir, dry_run=args.dry_run))
+            result = asyncio.run(_repair_covers(store, settings, args.dry_run))
     finally:
         store.close()
     print(json.dumps(result, ensure_ascii=False, indent=2))

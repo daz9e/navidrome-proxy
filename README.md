@@ -53,6 +53,8 @@ docker compose up -d --build
 All options: [`config.py`](src/navidrome_proxy/config.py).
 Moving from the first version: `migrate-legacy`, `adopt-youtube-fallbacks`, `remux-dash`,
 `repair-covers`, then `relayout` once Navidrome has rescanned (all but the first support `--dry-run`).
+Stop the server for these (only `remux-dash` runs next to it); verified database backups go to
+`DATA_DIR/backups` every 6 hours.
 
 ## Develop
 

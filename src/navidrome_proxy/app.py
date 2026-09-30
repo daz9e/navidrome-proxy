@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 
@@ -148,10 +149,28 @@ async def _on_startup(app: web.Application) -> None:
     s.extra["importer"].start()
     s.extra["reconciler"].start()
     s.indexer.notify()
+    if s.settings.backup_hours > 0:
+        s.extra["backups"] = asyncio.create_task(_backups(s))
+
+
+async def _backups(s: Services) -> None:
+    """A verified copy right after start, then every ``backup_hours``."""
+    while True:
+        try:
+            dest = await asyncio.to_thread(s.store.backup, s.settings.backup_dir, s.settings.backup_keep)
+            if dest is None:
+                log.error("state database failed its check; backup skipped")
+            else:
+                log.info("state database backed up to %s", dest.name)
+        except Exception:
+            log.exception("state database backup failed")
+        await asyncio.sleep(s.settings.backup_hours * 3600)
 
 
 async def _on_cleanup(app: web.Application) -> None:
     s = app[SERVICES]
+    if (task := s.extra.pop("backups", None)) is not None:
+        task.cancel()
     await s.extra["importer"].stop()
     await s.extra["reconciler"].stop()
     await s.scheduler.stop()

@@ -69,6 +69,8 @@ class Settings:
     slskd_upgrades: bool = True
     slskd_min_peers: int = 2
     lyrics: bool = True
+    backup_hours: float = 6.0
+    backup_keep: int = 8
     log_level: str = "INFO"
 
     @property
@@ -84,6 +86,10 @@ class Settings:
     @property
     def cache_dir(self) -> Path:
         return self.data_dir / "cache"
+
+    @property
+    def backup_dir(self) -> Path:
+        return self.data_dir / "backups"
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> Settings:
@@ -122,6 +128,8 @@ class Settings:
             slskd_upgrades=_bool(e.get("SLSKD_UPGRADES"), d.slskd_upgrades),
             slskd_min_peers=max(1, _int(e.get("SLSKD_MIN_PEERS"), d.slskd_min_peers)),
             lyrics=_bool(e.get("LYRICS"), d.lyrics),
+            backup_hours=_float(e.get("BACKUP_HOURS"), d.backup_hours),
+            backup_keep=max(1, _int(e.get("BACKUP_KEEP"), d.backup_keep)),
             log_level=e.get("LOG_LEVEL", d.log_level).upper(),
         )
 

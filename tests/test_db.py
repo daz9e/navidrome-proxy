@@ -150,3 +150,64 @@ def test_integrity_reports_healthy_and_corrupt_databases(tmp_path):
     broken._lock = threading.RLock()
     broken._conn = sqlite3.connect(str(path))
     assert broken.integrity(quick=False)
+
+
+def test_owner_lock_admits_one_process_at_a_time(tmp_path):
+    from navidrome_proxy.db import DatabaseBusy, OwnerLock
+
+    first = OwnerLock(tmp_path / "p.sqlite3")
+    first.acquire()
+    with pytest.raises(DatabaseBusy):
+        OwnerLock(tmp_path / "p.sqlite3").acquire()
+    first.release()
+    with OwnerLock(tmp_path / "p.sqlite3"):
+        pass
+
+
+def test_owner_lock_holds_across_processes(tmp_path):
+    import subprocess
+    import sys
+
+    from navidrome_proxy.db import OwnerLock
+
+    with OwnerLock(tmp_path / "p.sqlite3"):
+        code = (
+            "import sys; from navidrome_proxy.db import OwnerLock, DatabaseBusy\n"
+            f"try: OwnerLock({str(tmp_path / 'p.sqlite3')!r}).acquire()\n"
+            "except DatabaseBusy: sys.exit(3)\n"
+        )
+        assert subprocess.run([sys.executable, "-c", code]).returncode == 3
+
+
+def test_backup_is_verified_and_rotated(store, tmp_path):
+    store.remember_track("deezer:1", {"title": "A"})
+    backups = tmp_path / "backups"
+    made = []
+    for i in range(4):
+        (backups / f"proxy-2026010{i}-000000.sqlite3").parent.mkdir(exist_ok=True)
+        (backups / f"proxy-2026010{i}-000000.sqlite3").write_bytes(b"old")
+    made.append(store.backup(backups, keep=3))
+    assert made[0] is not None and made[0].exists()
+    kept = sorted(p.name for p in backups.glob("proxy-*.sqlite3"))
+    assert len(kept) == 3 and kept[-1] == made[0].name
+    copy = Store(made[0])
+    assert copy.get_track("deezer:1").title == "A"
+    copy.close()
+
+
+def test_backup_is_skipped_for_a_corrupt_database(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "x.sqlite3"
+    s = Store(path)
+    for i in range(300):
+        s.remember_track(f"deezer:{i}", {"title": "t" * 200})
+    s.close()
+    data = bytearray(path.read_bytes())
+    data[4096 * 3 : 4096 * 3 + 64] = b"\xff" * 64
+    path.write_bytes(bytes(data))
+    broken = Store.__new__(Store)
+    broken._lock = threading.RLock()
+    broken._conn = sqlite3.connect(str(path))
+    assert broken.backup(tmp_path / "backups") is None
+    assert not list((tmp_path / "backups").glob("*")) if (tmp_path / "backups").exists() else True

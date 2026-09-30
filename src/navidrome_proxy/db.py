@@ -12,7 +12,9 @@ wait for a track to become local.
 
 from __future__ import annotations
 
+import fcntl
 import json
+import os
 import sqlite3
 import threading
 import time
@@ -23,6 +25,49 @@ from pathlib import Path
 from typing import Any
 
 SCHEMA_VERSION = 1
+
+
+class DatabaseBusy(RuntimeError):
+    """Another process (the server or a maintenance command) owns the database."""
+
+
+class OwnerLock:
+    """One process at a time per state database, across containers too.
+
+    Twice a database got corrupted while the server and a maintenance container
+    wrote it at the same time, so the server and every command take this
+    ``flock`` first; the second one is refused instead of sharing the file.
+    """
+
+    def __init__(self, db_path: Path):
+        self.path = Path(str(db_path) + ".lock")
+        self._fd: int | None = None
+
+    def acquire(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            os.close(fd)
+            raise DatabaseBusy(
+                f"{self.path} is held by another navidrome-proxy process; stop it first"
+            ) from None
+        self._fd = fd
+
+    def release(self) -> None:
+        if self._fd is not None:
+            fcntl.flock(self._fd, fcntl.LOCK_UN)
+            os.close(self._fd)
+            self._fd = None
+
+    def __enter__(self) -> OwnerLock:
+        self.acquire()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.release()
+
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -237,6 +282,32 @@ class Store:
     def close(self) -> None:
         with self._lock:
             self._conn.close()
+
+    def backup(self, directory: Path, keep: int = 8) -> Path | None:
+        """Consistent online copy into ``directory`` (verified), keeping the newest ``keep``.
+
+        Nothing is written when the live database already fails its check, so the
+        copies taken before a corruption survive it.
+        """
+        if self.integrity():
+            return None
+        directory.mkdir(parents=True, exist_ok=True)
+        dest = directory / time.strftime("proxy-%Y%m%d-%H%M%S.sqlite3")
+        tmp = dest.with_suffix(".tmp")
+        target = sqlite3.connect(str(tmp))
+        try:
+            with self._lock:
+                self._conn.backup(target)
+            ok = target.execute("PRAGMA quick_check").fetchone()[0] == "ok"
+        finally:
+            target.close()
+        if not ok:
+            tmp.unlink(missing_ok=True)
+            return None
+        tmp.replace(dest)
+        for old in sorted(directory.glob("proxy-*.sqlite3"))[:-keep]:
+            old.unlink(missing_ok=True)
+        return dest
 
     @contextmanager
     def tx(self) -> Iterator[sqlite3.Connection]:
