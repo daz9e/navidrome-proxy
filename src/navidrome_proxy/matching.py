@@ -42,6 +42,7 @@ VERSION_MARKERS: dict[str, tuple[str, ...]] = {
     "acoustic": ("acoustic", "акустик"),
     "extended": ("extended", "club mix", "radio edit", "edit"),
     "demo": ("demo", "демо", "snippet", "сниппет", "preview", "leak"),
+    "loop": ("1 hour", "one hour", "10 hours", "hour loop", "1 час", "10 часов", "час версия"),
 }
 
 # Noise that video titles add around the real title.
@@ -291,12 +292,41 @@ def score_source_candidate(
         title_sim = max(title_sim, 0.9)
     if title_sim < 0.5:
         return Scored(0, [f"title~{title_sim:.2f}"], "title")
+    if (
+        not wanted.duration
+        and not title_matches(wanted.title, clean_title)
+        and not title_matches(wanted.title, title)
+    ):
+        # No duration to confirm it (a plain-text import): the title has to be the same.
+        return Scored(0, [f"title~{title_sim:.2f}"], "title")
     score = 45 * title_sim + 25 * artist_share + duration_score
     reasons += [f"title~{title_sim:.2f}", f"artists={artist_share:.2f}"]
     if official or uploader.lower().endswith(" - topic"):
         score += 10
         reasons.append("official")
     return Scored(round(score, 2), reasons)
+
+
+_NUMBER_TOKEN = re.compile(r"\d+")
+
+
+def title_matches(wanted: str | None, got: str | None, strict: float = 0.8) -> bool:
+    """Whether ``got`` names the same song as ``wanted`` (not merely a similar title).
+
+    Used where no duration can confirm a match (plain-text imports): "25 (Interlude)"
+    is not "15 (Interlude)", and "Расстройство" is not "Временно".
+    """
+    if set(_NUMBER_TOKEN.findall(normalize(wanted))) - set(_NUMBER_TOKEN.findall(normalize(got))):
+        return False
+    a, b = base_title(wanted), base_title(got)
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    wa, wb = set(a.split()), set(b.split())
+    if wa <= wb and len(wb - wa) <= 3:
+        return True
+    return max(similarity(a, b), SequenceMatcher(None, latin(a), latin(b)).ratio()) >= strict
 
 
 def relevance(query: str, *fields: str | None) -> float:

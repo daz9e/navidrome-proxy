@@ -177,10 +177,7 @@ class Importer:
         stats: dict[str, Any] = {"wrong": 0, "unstar": 0, "lines": []}
         for row in rows:
             match = row.get("match") or {}
-            if not row.get("track_id") or row["status"] not in ("matched", "fallback"):
-                continue
-            wanted = matching.split_artists(row["artist"])
-            if matching.artists_match(wanted, match.get("artist") or "") > 0:
+            if not row.get("track_id") or not self._wrong_match(row, match):
                 continue
             stats["wrong"] += 1
             stats["lines"].append(f"{row['input']}  ->  {match.get('artist')} - {match.get('title')}")
@@ -204,6 +201,23 @@ class Importer:
         if stats["wrong"] and not dry_run:
             self.store.save_import(import_id, username, "queued", imp["options"], rows)
         return stats
+
+    @staticmethod
+    def _wrong_match(row: dict[str, Any], match: dict[str, Any]) -> bool:
+        artists = matching.split_artists(row["artist"])
+        if row["status"] in ("matched", "fallback"):
+            return matching.artists_match(artists, match.get("artist") or "") == 0 or not (
+                matching.title_matches(row["title"], match.get("title"))
+            )
+        if row["status"] in ("matched_youtube", "matched_soundcloud"):
+            scored = matching.score_source_candidate(
+                matching.Wanted(row["title"], artists),
+                match.get("title") or "",
+                match.get("artist") or "",
+                None,
+            )
+            return scored.rejected is not None
+        return False
 
     # -------------------------------------------------------------- worker
     async def _worker(self) -> None:
@@ -262,7 +276,7 @@ class Importer:
         if not rows:
             rows = await self.deezer.search_tracks(row["title"], 15)
         best = await self._rank(wanted, rows) if rows else []
-        best = [c for c in best if c["artist_share"] > 0]
+        best = [c for c in best if c["artist_share"] > 0 and matching.title_matches(row["title"], c["title"])]
         if best and best[0]["score"] < 40:
             # Nothing even close in Deezer: another catalog may have the real track.
             others = await self._other_sources(wanted)

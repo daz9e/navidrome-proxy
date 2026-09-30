@@ -118,3 +118,28 @@ def test_artists_match_across_alphabets():
     assert m.artists_match(["АК-47"], "AK-47") == 1
     assert m.artists_match(["Сектор Газа"], "Russian Lo-Fi Radio") == 0
     assert m.artists_match(["DK"], "Экспайн") == 0
+
+
+@pytest.mark.parametrize(
+    ("title", "artists", "video", "uploader", "ok"),
+    [
+        ("25 (Interlude)", ["Кишлак"], "15 (Interlude)", "Кишлак", False),
+        ("BARBIE", ["GONE.Fludd"], "RARI LOVE", "GONE.Fludd", False),
+        ("Ламбада", ["N1NT3ND0"], "Пуля за брата", "N1NT3ND0", False),
+        ("Вуаля", ["Мэйби Бэйби", "Дора"], "МЭЙБИ БЭЙБИ, дора — Вуаля (1 час)", "fz1k", False),
+        ("awake", ["russianmafiaextra"], "russianmafiaextra x cowboyclicker – awake", "cowboyclick", True),
+        ("きみに回帰線", ["Inabakumori"], "稲葉曇『きみに回帰線』Vo. 歌愛ユキ", "inabakumori", True),
+        ("Деструктив [Бонус]", ["DK", "RAM"], "Диструктив [Бонус] (feat. RAM)", "DK", True),
+    ],
+)
+def test_import_sources_need_the_same_title(title, artists, video, uploader, ok):
+    """Real lines of an imported list; no duration is known, so the title decides."""
+    scored = m.score_source_candidate(m.Wanted(title, artists), video, uploader, None)
+    assert (scored.rejected is None) is ok
+
+
+def test_title_matches():
+    assert m.title_matches("Пора домой", "Pora Domoy")
+    assert m.title_matches("Hella Quality", "Hella Quality (feat. Bato)")
+    assert not m.title_matches("Расстройство", "Временно")
+    assert not m.title_matches("25 (Interlude)", "15 (Interlude)")
