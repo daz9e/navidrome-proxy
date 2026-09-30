@@ -133,3 +133,65 @@ def test_blocking_download_honours_cancel(tmp_path, monkeypatch):
     cancel.set()
     with pytest.raises(sources.Cancelled):
         sources._download_blocking("u", "f", Path(tmp_path), cancel, deadline=1e18)
+
+
+BODY = bytes(range(256)) * 4000  # ~1 MB
+
+
+async def _range_server(status=206):
+    from aiohttp import web
+    from aiohttp.test_utils import TestServer
+
+    seen = []
+
+    async def handle(request):
+        first, last = (int(x) for x in request.headers["Range"].removeprefix("bytes=").split("-"))
+        seen.append((first, last))
+        if status != 206:
+            return web.Response(status=status)
+        return web.Response(status=206, body=BODY[first : last + 1])
+
+    app = web.Application()
+    app.router.add_get("/audio", handle)
+    server = TestServer(app)
+    await server.start_server()
+    return server, seen
+
+
+async def test_direct_fetch_joins_parallel_ranges(tmp_path):
+    server, seen = await _range_server()
+    try:
+        info = {
+            "url": str(server.make_url("/audio")),
+            "protocol": "https",
+            "filesize": len(BODY),
+            "ext": "m4a",
+        }
+        path = await sources._fetch_direct(info, tmp_path, deadline=__import__("time").monotonic() + 30)
+        assert path.name == "source.m4a" and path.read_bytes() == BODY
+        assert len(seen) == 4
+    finally:
+        await server.close()
+
+
+async def test_download_falls_back_to_ytdlp_when_the_direct_fetch_is_refused(tmp_path, monkeypatch):
+    server, _ = await _range_server(status=403)
+    info = {"url": str(server.make_url("/audio")), "protocol": "https", "filesize": len(BODY), "ext": "m4a"}
+    monkeypatch.setattr(sources, "_resolve_blocking", lambda url, fmt: info)
+
+    def ytdlp(url, fmt, dest, cancel, deadline):
+        dest.mkdir(parents=True, exist_ok=True)
+        (dest / "source.webm").write_bytes(b"x")
+        return dest / "source.webm"
+
+    monkeypatch.setattr(sources, "_download_blocking", ytdlp)
+    cand = sources.Candidate("youtube", "https://youtube.com/watch?v=x", "x", "t", "u", 1.0)
+    try:
+        assert (await sources.download(cand, tmp_path / "job")).name == "source.webm"
+    finally:
+        await server.close()
+
+
+async def test_direct_fetch_needs_a_progressive_url(tmp_path):
+    with pytest.raises(sources.SourceError):
+        await sources._fetch_direct({"url": "https://x/m.m3u8", "protocol": "m3u8_native"}, tmp_path, 0)

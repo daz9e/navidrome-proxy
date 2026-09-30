@@ -12,19 +12,26 @@ rejects wrong durations and unrequested versions (minus/instrumental, karaoke,
 sped up, remix, live, cover ...).
 
 yt-dlp runs in-process (as a library, in a worker thread): no interpreter start-up
-per track, which alone saved seconds per download on the Raspberry Pi.
+per track, which alone saved seconds per download on the Raspberry Pi. For YouTube
+it only resolves the stream URL; the file itself is fetched here with a few
+parallel range requests (0.3 s for a song instead of ~9 s through yt-dlp's own
+downloader, which also resolves the URL a second time). yt-dlp's downloader stays
+as the fallback.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+import aiohttp
 
 from . import matching
 
@@ -220,6 +227,62 @@ PERMANENT_HINTS = (
 )
 
 
+def _ytdlp_error(exc: Exception) -> SourceError:
+    text = str(exc)
+    permanent = any(hint in text.lower() for hint in PERMANENT_HINTS)
+    return SourceError(f"yt-dlp: {text[-500:]}", transient=not permanent)
+
+
+def _resolve_blocking(url: str, fmt: str) -> dict[str, Any]:
+    """The chosen audio format of ``url`` (direct URL, headers, size), without downloading."""
+    import yt_dlp
+
+    opts = {
+        "format": fmt,
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "socket_timeout": 20,
+        "cachedir": False,
+    }
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False) or {}
+    except Exception as exc:
+        raise _ytdlp_error(exc) from exc
+    return info
+
+
+async def _fetch_direct(info: dict[str, Any], dest_dir: Path, deadline: float, parts: int = 4) -> Path:
+    """Fetch a resolved progressive (non-HLS/DASH-manifest) format with parallel range requests."""
+    url, size = info.get("url"), info.get("filesize")
+    if not url or info.get("protocol") not in ("http", "https") or not size:
+        raise SourceError("no direct URL")
+    size = int(size)
+    chunk = max(256 * 1024, math.ceil(size / parts))
+    ranges = [(start, min(size, start + chunk) - 1) for start in range(0, size, chunk)]
+    timeout = aiohttp.ClientTimeout(total=max(5.0, deadline - time.monotonic()), sock_connect=10)
+    async with aiohttp.ClientSession(headers=info.get("http_headers") or {}, timeout=timeout) as session:
+
+        async def one(first: int, last: int) -> bytes:
+            async with session.get(url, headers={"Range": f"bytes={first}-{last}"}) as resp:
+                if resp.status != 206:
+                    raise SourceError(f"direct fetch: HTTP {resp.status}")
+                data = await resp.read()
+            if len(data) != last - first + 1:
+                raise SourceError("direct fetch: short read")
+            return data
+
+        try:
+            blobs = await asyncio.gather(*(one(a, b) for a, b in ranges))
+        except (aiohttp.ClientError, TimeoutError) as exc:
+            raise SourceError(f"direct fetch: {exc}") from exc
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    path = dest_dir / f"source.{info.get('ext') or 'm4a'}"
+    path.write_bytes(b"".join(blobs))
+    return path
+
+
 def _download_blocking(url: str, fmt: str, dest_dir: Path, cancel: threading.Event, deadline: float) -> Path:
     import yt_dlp
 
@@ -253,9 +316,7 @@ def _download_blocking(url: str, fmt: str, dest_dir: Path, cancel: threading.Eve
     except SourceError:
         raise
     except Exception as exc:
-        text = str(exc)
-        permanent = any(hint in text.lower() for hint in PERMANENT_HINTS)
-        raise SourceError(f"yt-dlp: {text[-500:]}", transient=not permanent) from exc
+        raise _ytdlp_error(exc) from exc
     if not path.is_file():
         found = [p for p in dest_dir.iterdir() if p.is_file() and p.name.startswith("source.")]
         if not found:
@@ -269,12 +330,20 @@ async def download(
     dest_dir: Path,
     timeout: float = 300.0,
     cancel: threading.Event | None = None,
-    downloader: Callable[..., Path] = _download_blocking,
+    downloader: Callable[..., Path] | None = None,
 ) -> Path:
     """Download ``cand`` into ``dest_dir`` and return the raw file."""
     cancel = cancel or threading.Event()
     fmt = YOUTUBE_FORMAT if cand.source == "youtube" else SOUNDCLOUD_FORMAT
     deadline = time.monotonic() + timeout
+    if downloader is None:
+        downloader = _download_blocking
+        if cand.source == "youtube":
+            info = await asyncio.to_thread(_resolve_blocking, cand.url, fmt)
+            try:
+                return await _fetch_direct(info, dest_dir, deadline)
+            except SourceError as exc:
+                log.info("%s: direct fetch failed (%s); using yt-dlp", cand.ref, exc)
     try:
         return await asyncio.to_thread(downloader, cand.url, fmt, dest_dir, cancel, deadline)
     except asyncio.CancelledError:
