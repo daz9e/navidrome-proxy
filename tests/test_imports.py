@@ -128,3 +128,73 @@ async def test_import_playlist_keeps_list_order(world):
 async def test_import_page_is_served(world):
     page = await world.client.get("/proxy/import")
     assert page.status == 200 and "Import tracks" in await page.text()
+
+
+async def test_title_only_match_from_another_artist_is_not_taken(world):
+    world.deezer.add_album(
+        300,
+        "If The Sky Came Down",
+        "Lost Society",
+        30,
+        [dz_track(1725700, "Awake", "Lost Society", 300, "If", 200, 30)],
+    )
+    world.finder.results["Walking"] = [candidate("WWWWWWWWWWW", "Walking", "russianmafiaextra")]
+    resp = await world.client.post(
+        "/proxy/v1/imports",
+        json={"u": "alice", "p": "alicepw", "text": "russianmafiaextra - awake\nrussianmafiaextra - Walking"},
+    )
+    report = await wait_import(world, (await resp.json())["id"])
+    rows = {r["line"]: r for r in report["rows"]}
+    assert rows[1]["status"] == "not_found" and "track_id" not in rows[1]
+    assert rows[2]["status"] == "matched_youtube"
+    assert {t for _, t, _ in world.services.store.pending_stars("alice")} == {"yt:WWWWWWWWWWW"}
+
+
+async def test_recheck_takes_back_a_wrong_like_and_matches_again(world):
+    store = world.services.store
+    world.deezer.add_album(
+        300,
+        "If The Sky Came Down",
+        "Lost Society",
+        30,
+        [dz_track(1725700, "Awake", "Lost Society", 300, "If", 200, 30)],
+    )
+    store.remember_track("deezer:1725700", {"title": "Awake", "artist": "Lost Society"})
+    store.update_track("deezer:1725700", status="ready", local_id="WRONG1")
+    world.navidrome.songs["WRONG1"] = {
+        "id": "WRONG1",
+        "title": "Awake",
+        "artist": "Lost Society",
+        "album": "If",
+    }
+    world.navidrome.stars["alice"] = {"WRONG1"}
+    rows = imports.parse_text("russianmafiaextra - awake\nTVETH - Hella Quality")
+    rows[0].update(
+        status="fallback",
+        track_id="deezer:1725700",
+        match={"id": "deezer:1725700", "artist": "Lost Society", "title": "Awake", "score": 52.5},
+    )
+    rows[1].update(
+        status="matched", track_id="deezer:1001", match={"artist": "TVETH, Bato", "title": "Hella Quality"}
+    )
+    store.save_import(
+        "old", "alice", "completed", {"like": True, "playlist": None, "playlist_id": None}, rows
+    )
+    importer = world.services.extra["importer"]
+
+    dry = importer.recheck("old", dry_run=True)
+    assert dry["wrong"] == 1 and store.pending_unstars("alice") == []
+    assert importer.recheck("old") == {"wrong": 1, "unstar": 1, "lines": dry["lines"]}
+    assert store.pending_unstars("alice") == ["WRONG1"]
+
+    await world.json("search3", "query=nothing")  # alice shows up; her credentials are known again
+    for _ in range(200):  # that request replays her intents in the background
+        if not world.navidrome.stars["alice"]:
+            break
+        await asyncio.sleep(0.02)
+    assert world.navidrome.stars["alice"] == set()
+    assert store.pending_unstars("alice") == []
+
+    importer._queue.put_nowait("old")
+    report = await wait_import(world, "old")
+    assert [r["status"] for r in report["rows"]] == ["not_found", "matched"]

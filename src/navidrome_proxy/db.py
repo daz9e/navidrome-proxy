@@ -129,6 +129,14 @@ CREATE TABLE IF NOT EXISTS pending_stars (
     PRIMARY KEY (username, target)
 );
 
+-- Likes the proxy set by mistake (a wrong import match), to take back as that user.
+CREATE TABLE IF NOT EXISTS pending_unstars (
+    username TEXT NOT NULL,
+    local_id TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    PRIMARY KEY (username, local_id)
+);
+
 CREATE TABLE IF NOT EXISTS pending_scrobbles (
     username TEXT NOT NULL,
     track_id TEXT NOT NULL,
@@ -658,10 +666,29 @@ class Store:
                 (username, playlist_id, track_id),
             )
 
+    def add_pending_unstar(self, username: str, local_id: str) -> None:
+        with self.tx() as c:
+            c.execute(
+                "INSERT OR IGNORE INTO pending_unstars VALUES (?, ?, ?)", (username, local_id, time.time())
+            )
+
+    def pending_unstars(self, username: str) -> list[str]:
+        rows = self._query(
+            "SELECT local_id FROM pending_unstars WHERE username = ? ORDER BY created_at", (username,)
+        )
+        return [r["local_id"] for r in rows]
+
+    def remove_pending_unstars(self, username: str, local_ids: Iterable[str]) -> None:
+        with self.tx() as c:
+            c.executemany(
+                "DELETE FROM pending_unstars WHERE username = ? AND local_id = ?",
+                [(username, x) for x in local_ids],
+            )
+
     def users_with_pending_work(self) -> set[str]:
         rows = self._query(
             "SELECT username FROM pending_stars UNION SELECT username FROM pending_scrobbles "
-            "UNION SELECT username FROM pending_playlist_adds"
+            "UNION SELECT username FROM pending_playlist_adds UNION SELECT username FROM pending_unstars"
         )
         return {r["username"] for r in rows}
 

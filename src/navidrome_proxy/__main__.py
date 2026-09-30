@@ -43,6 +43,11 @@ def main(argv: list[str] | None = None) -> None:
         "adopt-youtube-fallbacks", help="tag the first proxy's yt-<deezer id>-yt files from the catalog"
     )
     fallbacks.add_argument("--dry-run", action="store_true")
+    recheck = sub.add_parser(
+        "recheck-import", help="match again import lines whose match credits none of the artists"
+    )
+    recheck.add_argument("import_id")
+    recheck.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
     settings = Settings.from_env()
     configure_logging(settings.log_level)
@@ -87,6 +92,8 @@ def main(argv: list[str] | None = None) -> None:
             result = {"ok": not problems, "problems": problems[:20]}
         elif args.command == "relayout":
             result = migrate.relayout(store, settings.music_dir, dry_run=args.dry_run)
+        elif args.command == "recheck-import":
+            result = _recheck_import(store, args.import_id, args.dry_run)
         elif args.command == "adopt-youtube-fallbacks":
             result = asyncio.run(_adopt_youtube_fallbacks(store, settings, args.dry_run))
         else:
@@ -94,6 +101,15 @@ def main(argv: list[str] | None = None) -> None:
     finally:
         store.close()
     print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+def _recheck_import(store, import_id: str, dry_run: bool) -> dict:
+    from .identity import Identity
+    from .imports import Importer
+
+    # Recheck only reads rows and writes intents; matching resumes in the server.
+    importer = Importer(store, Identity(store), None, None, None, None, None)  # type: ignore[arg-type]
+    return importer.recheck(import_id, dry_run=dry_run)
 
 
 async def _repair_covers(store, settings: Settings, dry_run: bool) -> dict[str, int]:

@@ -2,9 +2,11 @@
 
 Each line is matched against the catalog with :func:`matching.score_catalog_candidate`
 (title +40, all credited artists +35, album +15, duration +10, ISRC = certain,
-version markers penalized). A confident match is used; otherwise the best
-candidate is still taken but marked ``fallback`` in the report. Lines Deezer does
-not know are looked up on YouTube Music, then SoundCloud.
+version markers penalized). Only candidates crediting at least one of the
+requested artists count: a title alone ("No Lie", "Awake") names too many songs.
+A confident match is used; otherwise the best credited candidate is still taken
+but marked ``fallback`` in the report. Lines Deezer does not know are looked up
+on YouTube Music, then SoundCloud (whose matching checks the artist too).
 
 Matched tracks are liked for the importing user and downloaded in the background
 lane (they never slow down interactive playback). With ``playlist`` the import
@@ -161,6 +163,48 @@ class Importer:
             "rows": rows,
         }
 
+    def recheck(self, import_id: str, dry_run: bool = False) -> dict[str, Any]:
+        """Match again the rows whose catalog match credits none of the requested artists.
+
+        Earlier versions accepted such title-only matches as ``fallback``. The like
+        the import set on the wrong song is taken back (as that user, on their next
+        request) and the line goes through the current matcher again.
+        """
+        imp = self.store.get_import(import_id)
+        if imp is None:
+            raise KeyError(import_id)
+        username, rows = imp["username"], imp["rows"]
+        stats: dict[str, Any] = {"wrong": 0, "unstar": 0, "lines": []}
+        for row in rows:
+            match = row.get("match") or {}
+            if not row.get("track_id") or row["status"] not in ("matched", "fallback"):
+                continue
+            wanted = matching.split_artists(row["artist"])
+            if matching.artists_match(wanted, match.get("artist") or "") > 0:
+                continue
+            stats["wrong"] += 1
+            stats["lines"].append(f"{row['input']}  ->  {match.get('artist')} - {match.get('title')}")
+            if dry_run:
+                continue
+            if not self.store.remove_pending_star(username, row["track_id"]):
+                track = self.store.get_track(self.identity.canonical(row["track_id"]))
+                if track is not None and track.local_id:
+                    self.store.add_pending_unstar(username, track.local_id)
+                    stats["unstar"] += 1
+            log.info(
+                "import %s line %s: %r was matched to %r; matching again",
+                import_id,
+                row.get("line"),
+                row.get("input"),
+                f"{match.get('artist')} - {match.get('title')}",
+            )
+            for key in ("track_id", "match", "alternatives", "download", "download_error"):
+                row.pop(key, None)
+            row["status"] = "pending"
+        if stats["wrong"] and not dry_run:
+            self.store.save_import(import_id, username, "queued", imp["options"], rows)
+        return stats
+
     # -------------------------------------------------------------- worker
     async def _worker(self) -> None:
         while True:
@@ -218,6 +262,7 @@ class Importer:
         if not rows:
             rows = await self.deezer.search_tracks(row["title"], 15)
         best = await self._rank(wanted, rows) if rows else []
+        best = [c for c in best if c["artist_share"] > 0]
         if best and best[0]["score"] < 40:
             # Nothing even close in Deezer: another catalog may have the real track.
             others = await self._other_sources(wanted)
@@ -274,6 +319,9 @@ class Importer:
                     "score": scored.score,
                     "reasons": scored.reasons,
                     "rank": meta.get("rank", 0),
+                    "artist_share": matching.artists_match(
+                        wanted.artists, meta.get("artists") or meta.get("artist") or ""
+                    ),
                 }
             )
         ranked.sort(key=lambda c: (-c["score"], -c["rank"]))

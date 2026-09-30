@@ -57,12 +57,13 @@ class Intents:
 
     async def flush(self, username: str) -> dict[str, int]:
         creds = self.navidrome.credentials_for(username)
-        done = {"stars": 0, "scrobbles": 0, "playlist": 0}
+        done = {"stars": 0, "unstars": 0, "scrobbles": 0, "playlist": 0}
         if creds is None:
             return done
         lock = self._locks.setdefault(username, asyncio.Lock())
         async with lock:
             try:
+                done["unstars"] = await self._unstars(username, creds)
                 done["stars"] = await self._stars(username, creds)
                 done["scrobbles"] = await self._scrobbles(username, creds)
                 done["playlist"] = await self._playlists(username, creds)
@@ -71,6 +72,18 @@ class Intents:
         if any(done.values()):
             log.info("synced intents of %s to Navidrome: %s", username, done)
         return done
+
+    async def _unstars(self, username: str, creds: Params) -> int:
+        local_ids = self.store.pending_unstars(username)
+        if not local_ids:
+            return 0
+        try:
+            await self.navidrome.call_many("unstar", creds, {"id": local_ids})
+        except UpstreamError as exc:
+            log.warning("unstar of %d songs for %s rejected: %s", len(local_ids), username, exc)
+            return 0
+        self.store.remove_pending_unstars(username, local_ids)
+        return len(local_ids)
 
     async def _stars(self, username: str, creds: Params) -> int:
         synced = 0
