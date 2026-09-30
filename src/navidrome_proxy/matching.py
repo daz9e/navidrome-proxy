@@ -67,6 +67,49 @@ def normalize(text: str | None) -> str:
     return " ".join(value.split())
 
 
+_TRANSLIT = str.maketrans(
+    {
+        "а": "a",
+        "б": "b",
+        "в": "v",
+        "г": "g",
+        "д": "d",
+        "е": "e",
+        "ж": "zh",
+        "з": "z",
+        "и": "i",
+        "й": "y",
+        "к": "k",
+        "л": "l",
+        "м": "m",
+        "н": "n",
+        "о": "o",
+        "п": "p",
+        "р": "r",
+        "с": "s",
+        "т": "t",
+        "у": "u",
+        "ф": "f",
+        "х": "h",
+        "ц": "ts",
+        "ч": "ch",
+        "ш": "sh",
+        "щ": "sch",
+        "ъ": "",
+        "ы": "y",
+        "ь": "",
+        "э": "e",
+        "ю": "yu",
+        "я": "ya",
+    }
+)
+
+
+def latin(text: str | None) -> str:
+    """:func:`normalize` with Cyrillic transliterated, so "Братья Грим" meets "Bratya Grim"."""
+    return normalize(text).translate(_TRANSLIT)
+
+
 def words(text: str | None) -> set[str]:
     return set(normalize(text).split())
 
@@ -120,9 +163,11 @@ def artists_match(wanted: list[str], candidate: list[str] | str) -> float:
         candidate = split_artists(candidate) + [candidate]
     have = [normalize(c) for c in candidate if normalize(c)]
     joined = " ".join(have)
+    have_latin = [latin(c) for c in have]
     hits = 0
     for key in wanted_keys:
-        if key in have or f" {key} " in f" {joined} " or any(similarity(key, h) >= 0.88 for h in have):
+        same = key in have or f" {key} " in f" {joined} " or any(similarity(key, h) >= 0.88 for h in have)
+        if same or any(similarity(latin(key), h) >= 0.88 for h in have_latin):
             hits += 1
     return hits / len(wanted_keys)
 

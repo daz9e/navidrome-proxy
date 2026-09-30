@@ -110,3 +110,11 @@ def test_relevance_supports_prefixes_and_cyrillic():
     assert m.relevance("юпи порезы", "Естраден Оркестър", "Всичко започна през юни") == 0.0
     assert m.relevance("big ba", "Big Baby Tape", "Gimme The Loot") == 1.0
     assert m.relevance("big baby tape kizaru", "Big Baby Tape", "Bandana") == 0.75
+
+
+def test_artists_match_across_alphabets():
+    assert m.artists_match(["Братья Грим"], "Bratya Grim") == 1
+    assert m.artists_match(["МС Сенечка"], "MC Senechka, Say Shu") == 1
+    assert m.artists_match(["АК-47"], "AK-47") == 1
+    assert m.artists_match(["Сектор Газа"], "Russian Lo-Fi Radio") == 0
+    assert m.artists_match(["DK"], "Экспайн") == 0
