@@ -212,7 +212,7 @@ def relayout(store: Store, music_dir: Path, dry_run: bool = False) -> dict[str, 
 
 async def remux_dash(music_dir: Path, dry_run: bool = False, concurrency: int = 2) -> dict[str, int]:
     """Losslessly rewrite DASH-fragmented AAC files (wrong duration in AVFoundation)."""
-    stats = {"checked": 0, "remuxed": 0, "failed": 0}
+    stats = {"checked": 0, "remuxed": 0, "truncated": 0, "failed": 0}
     sem = asyncio.Semaphore(concurrency)
 
     async def one(path: Path) -> None:
@@ -224,13 +224,23 @@ async def remux_dash(music_dir: Path, dry_run: bool = False, concurrency: int = 
                     if info.brand == "dash":
                         stats["remuxed"] += 1
                     return
+                header = (await audio.probe(path)).duration
                 if await audio.remux_in_place(path):
                     stats["remuxed"] += 1
+                    real = (await audio.probe(path)).duration
+                    if header and real < 0.8 * header:
+                        # The download stopped early; only the DASH header knew the full length.
+                        stats["truncated"] += 1
+                        log.warning("%s is truncated (%.0fs of %.0fs): download it again", path, real, header)
             except Exception as exc:
                 log.warning("remux of %s failed: %s", path, exc)
                 stats["failed"] += 1
 
-    paths = [p for p in music_dir.rglob("*.m4a") if ".navidrome-proxy-staging" not in p.parts]
+    paths = [
+        p
+        for p in music_dir.rglob("*.m4a")
+        if ".navidrome-proxy-staging" not in p.parts and not p.name.startswith(".")  # our temp files
+    ]
     await asyncio.gather(*(one(p) for p in paths))
     return stats
 

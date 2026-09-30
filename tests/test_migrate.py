@@ -90,8 +90,9 @@ async def test_relayout_moves_file_and_sidecar(legacy):
 async def test_remux_dash(legacy):
     _, music, _ = legacy
     assert (await migrate.remux_dash(music, dry_run=True))["remuxed"] == 1
+    make(music / ".deezer-111.remux.m4a", 5)  # left behind by an interrupted run
     stats = await migrate.remux_dash(music)
-    assert stats == {"checked": 2, "remuxed": 1, "failed": 0}
+    assert stats == {"checked": 2, "remuxed": 1, "truncated": 0, "failed": 0}
     assert (await audio.probe(music / "deezer-111.m4a")).brand != "dash"
     assert tagging.read_tags(music / "deezer-111.m4a")["title"] == ["Old Song"]  # tags survive
 
