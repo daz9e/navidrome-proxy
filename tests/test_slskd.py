@@ -172,3 +172,150 @@ async def test_download_escapes_peer_names(tmp_path):
         await server.close()
     assert path == tmp_path / "dl" / "Album" / "Song.mp3"
     assert list(fake.transfers) == ["dj/one?#"]
+
+
+class ScriptedSlskd:
+    """slskd whose search completes on the n-th poll and whose transfers end in a given state."""
+
+    def __init__(self, polls_until_complete=2, transfer_state="Completed, Succeeded", search_status=200):
+        self.polls_until_complete = polls_until_complete
+        self.transfer_state = transfer_state
+        self.search_status = search_status
+        self.polls = 0
+        self.deleted: list[str] = []
+        self.keys: set[str] = set()
+
+    def app(self):
+        app = web.Application()
+        app.router.add_post("/api/v0/searches", self.create)
+        app.router.add_get("/api/v0/searches/{id}", self.state)
+        app.router.add_get("/api/v0/searches/{id}/responses", self.responses)
+        app.router.add_delete("/api/v0/searches/{id}", self.delete)
+        app.router.add_post("/api/v0/transfers/downloads/{user}", self.enqueue)
+        app.router.add_get("/api/v0/transfers/downloads/{user}", self.status)
+        return app
+
+    async def create(self, request):
+        self.keys.add(request.headers.get("X-API-Key", ""))
+        return web.json_response({"id": "s1"})
+
+    async def state(self, request):
+        self.polls += 1
+        if self.search_status != 200:
+            return web.Response(status=self.search_status)
+        return web.json_response({"isComplete": self.polls >= self.polls_until_complete})
+
+    async def responses(self, request):
+        return web.json_response([response("peer", [rfile("x\\A\\Black Water.mp3")])])
+
+    async def delete(self, request):
+        self.deleted.append(request.match_info["id"])
+        return web.Response(status=204)
+
+    async def enqueue(self, request):
+        return web.Response(status=201)
+
+    async def status(self, request):
+        files = [{"filename": "x\\A\\Song.mp3", "state": self.transfer_state}]
+        return web.json_response({"directories": [{"files": files}]})
+
+
+async def _client(fake, tmp_path):
+    server = TestServer(fake.app())
+    await server.start_server()
+    return server, slskd.Slskd(str(server.make_url("")), "secret-key", tmp_path)
+
+
+async def test_search_polls_until_complete_and_always_deletes_the_search(tmp_path):
+    fake = ScriptedSlskd(polls_until_complete=3)
+    server, client = await _client(fake, tmp_path)
+    try:
+        found = await client.search("FORTUNA 812 Black Water", timeout=5, poll=0.01)
+        assert [r["username"] for r in found] == ["peer"]
+        assert fake.polls == 3 and fake.deleted == ["s1"] and fake.keys == {"secret-key"}
+
+        broken = ScriptedSlskd(search_status=500)
+        server2, client2 = await _client(broken, tmp_path)
+        try:
+            with pytest.raises(slskd.SourceError, match="HTTP 500"):
+                await client2.search("x", timeout=5, poll=0.01)
+            assert broken.deleted == ["s1"]
+        finally:
+            await client2.close()
+            await server2.close()
+    finally:
+        await client.close()
+        await server.close()
+
+
+async def test_a_failed_transfer_is_permanent_and_a_stuck_one_times_out(tmp_path):
+    rf = slskd.RemoteFile("peer", "x\\A\\Song.mp3", 10, 320, 40, True, 0)
+    server, client = await _client(ScriptedSlskd(transfer_state="Completed, Errored"), tmp_path)
+    try:
+        with pytest.raises(slskd.SourceError) as failed:
+            await client.download(rf, timeout=5, poll=0.01)
+        assert not failed.value.transient
+    finally:
+        await client.close()
+        await server.close()
+    server, client = await _client(ScriptedSlskd(transfer_state="InProgress"), tmp_path)
+    try:
+        with pytest.raises(slskd.SourceError, match="timed out"):
+            await client.download(rf, timeout=0.1, poll=0.01)
+    finally:
+        await client.close()
+        await server.close()
+
+
+class NoNetwork:
+    def __init__(self, responses=()):
+        self.responses = list(responses)
+        self.searched: list[str] = []
+
+    async def search(self, text):
+        self.searched.append(text)
+        return self.responses
+
+
+def _ready_track(store, tmp_path, bitrate, source="youtube"):
+    path = tmp_path / "t.m4a"
+    path.write_bytes(b"x")
+    store.remember_track("deezer:1", {"title": "Black Water", "artists": ["FORTUNA 812"], "duration": 40})
+    store.update_track("deezer:1", status="ready", file=str(path), source=source, audio={"bitrate": bitrate})
+
+
+async def test_upgrader_leaves_good_or_unmatched_tracks_alone(tmp_path):
+    store = Store(tmp_path / "db.sqlite3")
+    library = Library(tmp_path, tmp_path / ".staging")
+    job = type("Job", (), {"track_id": "deezer:1"})()
+    try:
+        client = NoNetwork()
+        _ready_track(store, tmp_path, bitrate=320)
+        assert (await slskd.Upgrader(store, library, client)(job, None)).source == "youtube"
+        assert client.searched == []  # already good enough: no search at all
+
+        _ready_track(store, tmp_path, bitrate=128)
+        assert (await slskd.Upgrader(store, library, client)(job, None)).source == "youtube"
+        assert client.searched == ["FORTUNA 812 Black Water"]  # searched, nothing acceptable
+    finally:
+        store.close()
+
+
+async def test_upgrader_refuses_to_replace_without_a_fingerprint(tmp_path, monkeypatch):
+    store = Store(tmp_path / "db.sqlite3")
+    _ready_track(store, tmp_path, bitrate=128)
+    found = [
+        response(f"peer{i}", [rfile("x\\FORTUNA 812\\Black Water.mp3", 5000, 320, 40)]) for i in range(2)
+    ]
+
+    async def no_fpcalc(path, length=120):
+        return None
+
+    monkeypatch.setattr(slskd.audio, "fingerprint", no_fpcalc)
+    upgrader = slskd.Upgrader(store, Library(tmp_path, tmp_path / ".staging"), NoNetwork(found))
+    try:
+        with pytest.raises(slskd.SourceError, match="fpcalc") as refused:
+            await upgrader(type("Job", (), {"track_id": "deezer:1"})(), None)
+        assert not refused.value.transient
+    finally:
+        store.close()

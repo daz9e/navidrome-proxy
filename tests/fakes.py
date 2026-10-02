@@ -83,6 +83,8 @@ class FakeNavidrome:
     scrobbles: list[tuple[str, str, str]] = field(default_factory=list)
     scans: int = 0
     requests: list[tuple[str, dict]] = field(default_factory=list)
+    # The same requests with every value of repeated parameters (id=1&id=2).
+    repeated: list[tuple[str, dict[str, list[str]]]] = field(default_factory=list)
     audio: bytes = b"\x00" * 50_000
     on_scan: Any = None
 
@@ -122,6 +124,7 @@ class FakeNavidrome:
             q.update(dict(await request.post()))
         multi = request.query
         self.requests.append((method, q))
+        self.repeated.append((method, {k: multi.getall(k) for k in multi}))
         user = self.auth(q)
         if method == "ping" and not q.get("u"):
             return web.json_response(ok())
