@@ -7,6 +7,7 @@ dist/
 build/
 *.egg-info/
 .env
+proxy.env
 /data/
 /var/
 tools/avplayer/.build/

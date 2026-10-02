@@ -28,7 +28,7 @@ async def fetch(
             base_url,
             params=params,
             timeout=aiohttp.ClientTimeout(total=15),
-            headers={"User-Agent": "navidrome-proxy/2 (https://github.com)"},
+            headers={"User-Agent": "navidrome-proxy/2 (https://github.com/daz9e/navidrome-proxy)"},
         ) as resp:
             if resp.status != 200:
                 return None
