@@ -26,6 +26,18 @@ from typing import Any
 
 SCHEMA_VERSION = 1
 
+# Schema changes after version 1, keyed by the version they produce. ``_SCHEMA``
+# always describes the latest layout (new databases are created from it and then
+# stamped with SCHEMA_VERSION); an existing database runs every step above its
+# stored version, each in its own transaction. To change the schema: update
+# ``_SCHEMA``, add the step's statements here (ALTER TABLE ..., backfills) and bump
+# SCHEMA_VERSION.
+MIGRATIONS: dict[int, tuple[str, ...]] = {}
+
+
+class SchemaTooNew(RuntimeError):
+    """The database was written by a newer navidrome-proxy."""
+
 
 class DatabaseBusy(RuntimeError):
     """Another process (the server or a maintenance command) owns the database."""
@@ -272,10 +284,28 @@ class Store:
         self._conn.execute("PRAGMA foreign_keys=ON")
         with self._lock:
             self._conn.executescript(_SCHEMA)
+        try:
+            self._migrate()
+        except BaseException:
+            self._conn.close()
+            raise
+
+    def _migrate(self) -> None:
         with self.tx() as c:
             c.execute(
                 "INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?)", (str(SCHEMA_VERSION),)
             )
+        current = int(self.get_meta("schema_version") or SCHEMA_VERSION)
+        if current > SCHEMA_VERSION:
+            raise SchemaTooNew(
+                f"{self.path} has schema version {current}, this navidrome-proxy knows {SCHEMA_VERSION}; "
+                "upgrade the proxy or restore a backup"
+            )
+        for version in range(current + 1, SCHEMA_VERSION + 1):
+            with self.tx() as c:
+                for statement in MIGRATIONS[version]:
+                    c.execute(statement)
+                c.execute("UPDATE meta SET value = ? WHERE key = 'schema_version'", (str(version),))
 
     def integrity(self, quick: bool = True) -> list[str]:
         """Problems reported by SQLite (empty when the database is healthy)."""

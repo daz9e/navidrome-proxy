@@ -1,8 +1,10 @@
+import sqlite3
 import threading
 import time
 
 import pytest
 
+from navidrome_proxy import db
 from navidrome_proxy.db import Store
 
 
@@ -211,3 +213,44 @@ def test_backup_is_skipped_for_a_corrupt_database(tmp_path):
     broken._conn = sqlite3.connect(str(path))
     assert broken.backup(tmp_path / "backups") is None
     assert not list((tmp_path / "backups").glob("*")) if (tmp_path / "backups").exists() else True
+
+
+def test_schema_migrations_run_once_in_order(tmp_path, monkeypatch):
+    path = tmp_path / "m.sqlite3"
+    Store(path).close()
+    monkeypatch.setattr(db, "SCHEMA_VERSION", 3)
+    monkeypatch.setattr(
+        db,
+        "MIGRATIONS",
+        {
+            2: ("ALTER TABLE tracks ADD COLUMN rating INTEGER",),
+            3: ("UPDATE tracks SET rating = 5", "CREATE INDEX tracks_rating ON tracks(rating)"),
+        },
+    )
+    s = Store(path)
+    assert s.get_meta("schema_version") == "3"
+    s.close()
+    Store(path).close()  # already at 3: nothing runs twice
+
+
+def test_newer_schema_is_refused(tmp_path):
+    path = tmp_path / "n.sqlite3"
+    s = Store(path)
+    s.set_meta("schema_version", "99")
+    s.close()
+    with pytest.raises(db.SchemaTooNew):
+        Store(path)
+
+
+def test_failed_migration_leaves_the_old_version(tmp_path, monkeypatch):
+    path = tmp_path / "f.sqlite3"
+    Store(path).close()
+    monkeypatch.setattr(db, "SCHEMA_VERSION", 2)
+    monkeypatch.setattr(db, "MIGRATIONS", {2: ("ALTER TABLE tracks ADD COLUMN x INTEGER", "NOT SQL")})
+    with pytest.raises(sqlite3.OperationalError):
+        Store(path)
+    monkeypatch.setattr(db, "SCHEMA_VERSION", 1)
+    s = Store(path)
+    assert s.get_meta("schema_version") == "1"
+    assert "x" not in [r[1] for r in s._query("PRAGMA table_info(tracks)")]
+    s.close()
