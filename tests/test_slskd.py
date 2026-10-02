@@ -146,3 +146,29 @@ async def test_upgrade_rejects_other_recording_and_accepts_the_same_one(tmp_path
     assert result.audio["bitrate"] >= 300
     assert "different recording" in caplog.text  # the minus was downloaded, checked and refused
     store.close()
+
+
+def test_locate_finds_names_with_brackets_outside_the_remote_folder(tmp_path):
+    stored = tmp_path / "other folder" / "[2019] Black Water.mp3"
+    stored.parent.mkdir()
+    stored.write_bytes(b"x" * 10)
+    client = slskd.Slskd("http://unused", "key", tmp_path)
+    rf = slskd.RemoteFile("peer", "music\\Album\\[2019] Black Water.mp3", 10, 320, 40, True, 0)
+    assert client.locate(rf) == stored
+
+
+async def test_download_escapes_peer_names(tmp_path):
+    source = tmp_path / "src.mp3"
+    source.write_bytes(b"y" * 10)
+    fake = FakeSlskd(tmp_path / "dl", {"a\\Album\\Song.mp3": source})
+    server = TestServer(fake.app())
+    await server.start_server()
+    client = slskd.Slskd(str(server.make_url("")), "key", tmp_path / "dl")
+    rf = slskd.RemoteFile("dj/one?#", "a\\Album\\Song.mp3", 10, 320, 40, True, 0)
+    try:
+        path = await client.download(rf, timeout=5, poll=0.01)
+    finally:
+        await client.close()
+        await server.close()
+    assert path == tmp_path / "dl" / "Album" / "Song.mp3"
+    assert list(fake.transfers) == ["dj/one?#"]

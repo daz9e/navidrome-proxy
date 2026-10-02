@@ -11,12 +11,14 @@ Black Water in the first proxy generation.
 from __future__ import annotations
 
 import asyncio
+import glob
 import logging
 import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 from typing import Any
+from urllib.parse import quote
 
 import aiohttp
 
@@ -151,13 +153,13 @@ class Slskd:
                 pass
 
     async def download(self, rf: RemoteFile, timeout: float = 600.0, poll: float = 2.0) -> Path:
-        await self._json(
-            "POST", f"transfers/downloads/{rf.username}", json=[{"filename": rf.filename, "size": rf.size}]
-        )
+        # Peer names are chosen by other Soulseek users and may contain "/", "?" or "#".
+        user_path = f"transfers/downloads/{quote(rf.username, safe='')}"
+        await self._json("POST", user_path, json=[{"filename": rf.filename, "size": rf.size}])
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             await asyncio.sleep(poll)
-            user = await self._json("GET", f"transfers/downloads/{rf.username}") or {}
+            user = await self._json("GET", user_path) or {}
             for directory in user.get("directories") or []:
                 for f in directory.get("files") or []:
                     if f.get("filename") != rf.filename:
@@ -177,7 +179,8 @@ class Slskd:
         direct = self.downloads_dir / folder / rf.basename
         if direct.is_file() and direct.stat().st_size == rf.size:
             return direct
-        for path in self.downloads_dir.rglob(rf.basename):
+        # "[2019] Title.flac" is a literal name, not a glob character class.
+        for path in self.downloads_dir.rglob(glob.escape(rf.basename)):
             if path.is_file() and path.stat().st_size == rf.size:
                 return path
         return None
