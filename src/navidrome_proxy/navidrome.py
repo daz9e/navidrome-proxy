@@ -91,7 +91,18 @@ class Navidrome:
 
         Raises :class:`UpstreamError` for ``status="failed"`` responses.
         """
+        return await self._get(method, params.credentials().with_(f="json", **extra), timeout)
+
+    async def call_many(
+        self, method: str, params: Params, repeated: dict[str, list[str]], **extra: str
+    ) -> dict[str, Any]:
+        """Like :meth:`call` but with repeated parameters (``id=1&id=2``)."""
         query = params.credentials().with_(f="json", **extra)
+        for key, values in repeated.items():
+            query = query.replace(key, values)
+        return await self._get(method, query, timeout=30.0)
+
+    async def _get(self, method: str, query: Params, timeout: float) -> dict[str, Any]:
         if "c" not in query:
             query = query.with_(c="navidrome-proxy")
         if "v" not in query:
@@ -108,27 +119,6 @@ class Navidrome:
             root = json.loads(raw)["subsonic-response"]
         except (ValueError, KeyError) as exc:
             raise UpstreamUnavailable(f"{method}: unexpected response {raw[:200]!r}") from exc
-        if root.get("status") != "ok":
-            error = root.get("error") or {}
-            raise UpstreamError(int(error.get("code", 0)), str(error.get("message", "failed")))
-        return root
-
-    async def call_many(
-        self, method: str, params: Params, repeated: dict[str, list[str]], **extra: str
-    ) -> dict[str, Any]:
-        """Like :meth:`call` but with repeated parameters (``id=1&id=2``)."""
-        query = params.credentials().with_(f="json", **extra)
-        for key, values in repeated.items():
-            query = query.replace(key, values)
-        if "c" not in query:
-            query = query.with_(c="navidrome-proxy")
-        if "v" not in query:
-            query = query.with_(v="1.16.1")
-        try:
-            async with self.api.get(f"{self.base_url}/rest/{method}", params=query.items()) as resp:
-                root = json.loads(await resp.read())["subsonic-response"]
-        except (aiohttp.ClientError, TimeoutError, ValueError, KeyError) as exc:
-            raise UpstreamUnavailable(f"{method}: {exc}") from exc
         if root.get("status") != "ok":
             error = root.get("error") or {}
             raise UpstreamError(int(error.get("code", 0)), str(error.get("message", "failed")))

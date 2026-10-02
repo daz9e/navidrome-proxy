@@ -173,6 +173,8 @@ async def _on_cleanup(app: web.Application) -> None:
         task.cancel()
     await s.extra["importer"].stop()
     await s.extra["reconciler"].stop()
+    for background in (s.background, s.intents.background, s.pipeline.background):
+        await background.cancel()
     await s.scheduler.stop()
     await s.indexer.stop()
     await s.covers.close()

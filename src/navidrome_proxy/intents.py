@@ -17,6 +17,7 @@ from .db import Store, Track
 from .identity import Identity
 from .navidrome import Navidrome, UpstreamError, UpstreamUnavailable
 from .subsonic.params import Params
+from .tasks import Background
 
 log = logging.getLogger(__name__)
 
@@ -29,7 +30,7 @@ class Intents:
         self.min_interval = min_interval
         self._last_flush: dict[str, float] = {}
         self._locks: dict[str, asyncio.Lock] = {}
-        self._tasks: set[asyncio.Task] = set()
+        self.background = Background()
 
     def _local_id(self, target: str) -> str | None:
         track = self.store.get_track(self.identity.canonical(target))
@@ -46,9 +47,7 @@ class Intents:
             self._last_flush[username] = now
             return
         self._last_flush[username] = now
-        task = asyncio.create_task(self.flush(username))
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+        self.background.spawn(self.flush(username))
 
     async def on_track_mapped(self, track: Track) -> None:
         """A download got its Navidrome id: replay every user's pending intents."""

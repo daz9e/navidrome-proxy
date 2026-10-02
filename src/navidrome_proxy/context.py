@@ -9,6 +9,7 @@ from aiohttp import web
 
 from .subsonic import response as sr
 from .subsonic.params import Params
+from .tasks import Background
 
 if TYPE_CHECKING:
     from .catalog import Catalog
@@ -40,6 +41,7 @@ class Services:
     scheduler: Scheduler
     catalog: Catalog
     intents: Intents
+    background: Background = field(default_factory=Background)
     extra: dict[str, Any] = field(default_factory=dict)
 
 

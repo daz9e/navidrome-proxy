@@ -19,13 +19,6 @@ from ..subsonic import response as sr
 from . import endpoint
 
 log = logging.getLogger(__name__)
-_background: set[asyncio.Task] = set()
-
-
-def _spawn(coro) -> None:
-    task = asyncio.create_task(coro)
-    _background.add(task)
-    task.add_done_callback(_background.discard)
 
 
 def _is_json(call: Call) -> bool:
@@ -191,14 +184,16 @@ async def complete_album(
         else:
             deezer_album = s.store.cache_get(f"deezer-album-for:{album.get('id')}")
             if deezer_album is None:
-                _spawn(_associate(s, str(album.get("id")), album.get("name"), album.get("artist")))
+                s.background.spawn(
+                    _associate(s, str(album.get("id")), album.get("name"), album.get("artist"))
+                )
                 return 0
             if not deezer_album:
                 return 0  # known to have no catalog twin
     rows = s.deezer.cached_album_tracks(deezer_album)
     if rows is None:
         if not fetch:
-            _spawn(_warm_album(s, deezer_album))
+            s.background.spawn(_warm_album(s, deezer_album))
             return 0
         try:
             await s.deezer.album(deezer_album)

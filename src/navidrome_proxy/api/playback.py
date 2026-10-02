@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from pathlib import Path
@@ -31,16 +30,11 @@ def wants_transcoding(call: Call, track: Track) -> bool:
     return 0 < max_rate < int(track.audio.get("bitrate") or 0)
 
 
-_background: set[asyncio.Task] = set()
-
-
 def prefetch_next(s: Services, track: Track) -> None:
     """Queue the next tracks of the album so album playback never stalls."""
     if s.settings.prefetch_next_tracks <= 0 or not track.album_id:
         return
-    task = asyncio.create_task(_prefetch(s, track))
-    _background.add(task)
-    task.add_done_callback(_background.discard)
+    s.background.spawn(_prefetch(s, track))
 
 
 async def _prefetch(s: Services, track: Track) -> None:

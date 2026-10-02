@@ -17,6 +17,7 @@ from .db import Store, Track
 from .deezer import Deezer, DeezerError
 from .identity import Identity
 from .library import Indexer, Library
+from .tasks import Background
 
 log = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ class Pipeline:
         self.indexer = indexer
         self.covers = covers
         self.downloader = downloader
-        self._background: set[asyncio.Task] = set()
+        self.background = Background()
 
     # ---------------------------------------------------------------- helpers
     async def hydrate(self, track: Track) -> dict[str, Any]:
@@ -182,10 +183,10 @@ class Pipeline:
             if self.indexer is not None:
                 self.indexer.notify()
             if self.settings.lyrics:
-                self._spawn(self._lyrics(dest, tag_meta))
+                self.background.spawn(self._lyrics(dest, tag_meta))
             if fresh.album_id and track.id.startswith("deezer:"):
                 # Warm the album's track list: local album pages are completed from it.
-                self._spawn(self._warm_album(fresh.album_id))
+                self.background.spawn(self._warm_album(fresh.album_id))
             log.info(
                 "ready %s <- %s %s (%.0fs, %s)", track.id, cand.source, cand.ref, info.duration, dest.name
             )
@@ -203,8 +204,3 @@ class Pipeline:
         found = await lyrics.fetch(self.covers.session, meta)
         if found and dest.exists():
             lyrics.save(dest, found)
-
-    def _spawn(self, coro) -> None:
-        task = asyncio.create_task(coro)
-        self._background.add(task)
-        task.add_done_callback(self._background.discard)
