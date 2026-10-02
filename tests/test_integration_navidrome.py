@@ -85,6 +85,9 @@ def navidrome(tmp_path_factory):
             "ND_DEVAUTOCREATEADMINPASSWORD=adminpw",
             "-e",
             "ND_SCANNER_SCHEDULE=0",
+            "-e",
+            # No file watcher: a scan it starts mid-remux races the explicit scans below.
+            "ND_SCANNER_WATCHERWAIT=0",
             "-v",
             f"{music}:/music",
             "-v",
@@ -140,7 +143,9 @@ def test_navidrome_reads_our_tags_and_keeps_ids_across_relayout_and_remux(navidr
     assert migrate.relayout(store, music)["moved"] == 1
     assert asyncio.run(migrate.remux_dash(music))["remuxed"] == 1
     store.close()
-    nd(base, "startScan")
+    # A full scan rereads every file, so the new duration does not depend on a quick
+    # scan noticing the remuxed file.
+    nd(base, "startScan", "fullScan=true")
     wait_scan(base)
     after = nd(base, "search3", "query=Relayout&songCount=5")["searchResult3"]["song"]
     assert [s["id"] for s in after] == [song["id"]]  # same id: likes and play counts survive
