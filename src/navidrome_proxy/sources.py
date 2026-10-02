@@ -253,7 +253,13 @@ def _resolve_blocking(url: str, fmt: str) -> dict[str, Any]:
     return info
 
 
-async def _fetch_direct(info: dict[str, Any], dest_dir: Path, deadline: float, parts: int = 4) -> Path:
+async def _fetch_direct(
+    info: dict[str, Any],
+    dest_dir: Path,
+    deadline: float,
+    parts: int = 4,
+    cancel: threading.Event | None = None,
+) -> Path:
     """Fetch a resolved progressive (non-HLS/DASH-manifest) format with parallel range requests."""
     url, size = info.get("url"), info.get("filesize")
     if not url or info.get("protocol") not in ("http", "https") or not size:
@@ -268,10 +274,14 @@ async def _fetch_direct(info: dict[str, Any], dest_dir: Path, deadline: float, p
             async with session.get(url, headers={"Range": f"bytes={first}-{last}"}) as resp:
                 if resp.status != 206:
                     raise SourceError(f"direct fetch: HTTP {resp.status}")
-                data = await resp.read()
+                data = bytearray()
+                async for piece in resp.content.iter_chunked(64 * 1024):
+                    if cancel is not None and cancel.is_set():
+                        raise Cancelled()
+                    data += piece
             if len(data) != last - first + 1:
                 raise SourceError("direct fetch: short read")
-            return data
+            return bytes(data)
 
         try:
             blobs = await asyncio.gather(*(one(a, b) for a, b in ranges))
@@ -341,7 +351,9 @@ async def download(
         if cand.source == "youtube":
             info = await asyncio.to_thread(_resolve_blocking, cand.url, fmt)
             try:
-                return await _fetch_direct(info, dest_dir, deadline)
+                return await _fetch_direct(info, dest_dir, deadline, cancel=cancel)
+            except Cancelled:
+                raise
             except SourceError as exc:
                 log.info("%s: direct fetch failed (%s); using yt-dlp", cand.ref, exc)
     try:

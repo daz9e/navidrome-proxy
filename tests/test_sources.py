@@ -195,3 +195,18 @@ async def test_download_falls_back_to_ytdlp_when_the_direct_fetch_is_refused(tmp
 async def test_direct_fetch_needs_a_progressive_url(tmp_path):
     with pytest.raises(sources.SourceError):
         await sources._fetch_direct({"url": "https://x/m.m3u8", "protocol": "m3u8_native"}, tmp_path, 0)
+
+
+async def test_direct_fetch_stops_on_cancel_without_falling_back(tmp_path, monkeypatch):
+    server, _ = await _range_server()
+    info = {"url": str(server.make_url("/audio")), "protocol": "https", "filesize": len(BODY), "ext": "m4a"}
+    monkeypatch.setattr(sources, "_resolve_blocking", lambda url, fmt: info)
+    monkeypatch.setattr(sources, "_download_blocking", lambda *a: pytest.fail("yt-dlp must not run"))
+    cancel = threading.Event()
+    cancel.set()
+    cand = sources.Candidate("youtube", "https://youtube.com/watch?v=x", "x", "t", "u", 1.0)
+    try:
+        with pytest.raises(sources.Cancelled):
+            await sources.download(cand, tmp_path / "job", cancel=cancel)
+    finally:
+        await server.close()
