@@ -198,3 +198,14 @@ async def test_recheck_takes_back_a_wrong_like_and_matches_again(world):
     importer._queue.put_nowait("old")
     report = await wait_import(world, "old")
     assert [r["status"] for r in report["rows"]] == ["not_found", "matched"]
+
+
+async def test_import_accepts_token_auth_like_the_import_page_sends(world):
+    import hashlib
+
+    salt = "c0ffee"
+    auth = {"u": "alice", "t": hashlib.md5(("alicepw" + salt).encode()).hexdigest(), "s": salt}
+    resp = await world.client.post("/proxy/v1/imports", json={**auth, "text": "TVETH - Hella Quality"})
+    assert resp.status == 202
+    report = await wait_import(world, (await resp.json())["id"], auth=f"u=alice&t={auth['t']}&s={salt}")
+    assert report["status"] == "completed"
