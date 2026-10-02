@@ -58,13 +58,19 @@ def main(argv: list[str] | None = None) -> None:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return None
 
-    from .db import DatabaseBusy, OwnerLock
+    from .db import DatabaseBusy, OwnerLock, SchemaTooNew
 
     owner = OwnerLock(settings.db_path)
     try:
         owner.acquire()
-    except DatabaseBusy as exc:
+        return _run(args, settings)
+    except (DatabaseBusy, SchemaTooNew) as exc:
         sys.exit(f"navidrome-proxy: {exc}")
+    finally:
+        owner.release()
+
+
+def _run(args: argparse.Namespace, settings: Settings) -> None:
     if args.command in (None, "serve"):
         from .app import create_app
 
@@ -109,7 +115,10 @@ def _recheck_import(store, import_id: str, dry_run: bool) -> dict:
 
     # Recheck only reads rows and writes intents; matching resumes in the server.
     importer = Importer(store, Identity(store), None, None, None, None, None)  # type: ignore[arg-type]
-    return importer.recheck(import_id, dry_run=dry_run)
+    try:
+        return importer.recheck(import_id, dry_run=dry_run)
+    except KeyError:
+        sys.exit(f"navidrome-proxy: no import {import_id}")
 
 
 async def _repair_covers(store, settings: Settings, dry_run: bool) -> dict[str, int]:
