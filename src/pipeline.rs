@@ -50,6 +50,12 @@ pub struct Pipeline {
     pub background: Arc<Background>,
 }
 
+/// Cover bytes ready to embed: MP4 and most ID3 readers know only JPEG/PNG artwork.
+pub async fn cover_for_tags(covers: &Covers, tools: &Tools, url: &str, work_dir: &Path) -> Option<Vec<u8>> {
+    let cover = covers.get(url).await?.0;
+    if crate::covers::is_webp(&cover) { tools.to_jpeg(&cover, work_dir).await } else { Some(cover) }
+}
+
 fn io_error(e: impl std::fmt::Display) -> SourceError {
     SourceError::new(e.to_string(), true)
 }
@@ -198,11 +204,7 @@ impl Pipeline {
             tag_meta.insert("album".into(), json!(album));
         }
         let cover_url = opt_str(tag_meta.get("cover")).or_else(|| cand.thumbnail.clone()).unwrap_or_default();
-        let mut cover = self.covers.get(&cover_url).await.map(|(bytes, _)| bytes);
-        if cover.as_deref().is_some_and(crate::covers::is_webp) {
-            // MP4 and most ID3 readers know only JPEG/PNG artwork.
-            cover = self.tools.to_jpeg(cover.as_deref().unwrap_or_default(), staging).await;
-        }
+        let cover = cover_for_tags(&self.covers, &self.tools, &cover_url, staging).await;
         let (path, tags) = (prepared.clone(), tag_meta.clone());
         tokio::task::spawn_blocking(move || crate::tagging::write_tags(&path, &tags, cover.as_deref()))
             .await
