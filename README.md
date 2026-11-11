@@ -8,10 +8,6 @@
   Search anything, press play, and the track becomes yours.
 </p>
 
-<p align="center">
-  <a href="https://github.com/daz9e/navidrome-proxy/actions/workflows/ci.yml"><img src="https://github.com/daz9e/navidrome-proxy/actions/workflows/ci.yml/badge.svg" alt="ci"></a>
-</p>
-
 ---
 
 Point any Subsonic client (Arpeggi, Substreamer, Symfonium, the Navidrome web UI) at the proxy
