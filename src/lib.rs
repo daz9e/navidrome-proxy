@@ -12,6 +12,7 @@ pub mod library;
 pub mod lyrics;
 pub mod matching;
 pub mod navidrome;
+pub mod pipeline;
 pub mod process;
 pub mod scheduler;
 pub mod sources;
