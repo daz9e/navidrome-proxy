@@ -1,5 +1,9 @@
 //! Artwork fetched from the catalog, cached on disk.
+//!
+//! Covers are square everywhere; YouTube video thumbnails (16:9, or 4:3 with black
+//! bars) are cropped to their centre square before they are cached.
 
+use crate::audio::Tools;
 use futures::StreamExt;
 use parking_lot::Mutex;
 use sha2::{Digest, Sha256};
@@ -14,6 +18,13 @@ pub struct Covers {
     cache_dir: PathBuf,
     pub http: reqwest::Client,
     locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    /// ffmpeg for cropping video thumbnails; without it they are served as they are.
+    tools: Option<Tools>,
+}
+
+/// A YouTube video thumbnail (never square), as opposed to album art.
+pub fn is_video_thumbnail(url: &str) -> bool {
+    url.contains("i.ytimg.com/")
 }
 
 impl Covers {
@@ -27,11 +38,27 @@ impl Covers {
             cache_dir: cache_dir.to_path_buf(),
             http,
             locks: Mutex::new(HashMap::new()),
+            tools: None,
         }
     }
 
+    pub fn with_tools(mut self, tools: Tools) -> Self {
+        self.tools = Some(tools);
+        self
+    }
+
+    fn crops(&self, url: &str) -> bool {
+        self.tools.is_some() && is_video_thumbnail(url)
+    }
+
     fn path(&self, url: &str) -> PathBuf {
-        let digest = hex::encode(Sha256::digest(url.as_bytes()));
+        // Cropped entries get their own key, so uncropped ones cached earlier are not reused.
+        let key = if self.crops(url) {
+            format!("{url}#square")
+        } else {
+            url.to_string()
+        };
+        let digest = hex::encode(Sha256::digest(key.as_bytes()));
         self.cache_dir
             .join(&digest[..2])
             .join(format!("{digest}.img"))
@@ -72,7 +99,7 @@ impl Covers {
             }
             let _ = tokio::fs::remove_file(path).await;
         }
-        let data = match self.download(url).await {
+        let mut data = match self.download(url).await {
             Ok(Some(d)) => d,
             Ok(None) => return None,
             Err(e) => {
@@ -80,6 +107,15 @@ impl Covers {
                 return None;
             }
         };
+        if let Some(tools) = self.tools.as_ref().filter(|_| self.crops(url)) {
+            match tools.to_jpeg(&data, &self.cache_dir, true).await {
+                Some(square) => data = square,
+                None => {
+                    tracing::warn!("cannot crop {url}; serving it uncropped");
+                    return Some((data.clone(), content_type(&data)));
+                }
+            }
+        }
         if let Some(parent) = path.parent() {
             let _ = tokio::fs::create_dir_all(parent).await;
         }
@@ -186,6 +222,67 @@ mod tests {
             }),
         );
         serve(router).await
+    }
+
+    #[tokio::test]
+    async fn video_thumbnails_are_cached_square() {
+        use crate::audio::tests::{have, need};
+        need!("ffmpeg", "ffprobe");
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("thumb.jpg");
+        let made = std::process::Command::new("ffmpeg")
+            .args([
+                "-nostdin",
+                "-v",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=red:s=480x360",
+            ])
+            .args(["-frames:v", "1"])
+            .arg(&src)
+            .status()
+            .unwrap();
+        assert!(made.success());
+        let thumb = std::fs::read(&src).unwrap();
+        let served = thumb.clone();
+        let server = serve(Router::new().route(
+            "/i.ytimg.com/vi/x/hqdefault.jpg",
+            axum::routing::get(move || async move { served }),
+        ))
+        .await;
+        let covers = Covers::new(&dir.path().join("cache")).with_tools(Tools::default());
+        let url = format!("{}/i.ytimg.com/vi/x/hqdefault.jpg", server.url);
+        let side = |data: &[u8]| {
+            let p = dir.path().join("probe.jpg");
+            std::fs::write(&p, data).unwrap();
+            let out = std::process::Command::new("ffprobe")
+                .args([
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "stream=width,height",
+                    "-of",
+                    "csv=p=0",
+                ])
+                .arg(&p)
+                .output()
+                .unwrap();
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        assert_eq!(side(&covers.get(&url).await.unwrap().0), "270,270");
+        drop(server);
+        assert_eq!(
+            side(&covers.get(&url).await.unwrap().0),
+            "270,270",
+            "from disk"
+        );
+        // Album art is never touched.
+        assert!(!is_video_thumbnail(
+            "https://cdn-images.dzcdn.net/images/cover/x/1000x1000.jpg"
+        ));
     }
 
     #[tokio::test]

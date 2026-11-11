@@ -79,7 +79,7 @@ pub async fn cover_for_tags(
 ) -> Option<Vec<u8>> {
     let cover = covers.get(url).await?.0;
     if crate::covers::is_webp(&cover) {
-        tools.to_jpeg(&cover, work_dir).await
+        tools.to_jpeg(&cover, work_dir, false).await
     } else {
         Some(cover)
     }

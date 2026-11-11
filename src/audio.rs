@@ -258,12 +258,21 @@ impl Tools {
     }
 
     /// Convert any image ffmpeg reads (WebP thumbnails) to JPEG for embedding.
-    pub async fn to_jpeg(&self, image: &[u8], work_dir: &Path) -> Option<Vec<u8>> {
-        let src = work_dir.join("cover.src");
-        let dest = work_dir.join("cover.jpg");
+    ///
+    /// `square` crops the centre square; a 4:3 frame is a 16:9 picture between black
+    /// bars (YouTube's `hqdefault`), so its square is the picture's height.
+    pub async fn to_jpeg(&self, image: &[u8], work_dir: &Path, square: bool) -> Option<Vec<u8>> {
+        let unique = rand::random::<u64>();
+        let src = work_dir.join(format!("cover-{unique:x}.src"));
+        let dest = work_dir.join(format!("cover-{unique:x}.jpg"));
+        std::fs::create_dir_all(work_dir).ok()?;
         std::fs::write(&src, image).ok()?;
         let mut a = args(["-nostdin", "-v", "error", "-y", "-i"]);
         a.push(src.display().to_string());
+        if square {
+            let side = "if(eq(iw*3,ih*4),iw*9/16,min(iw,ih))";
+            a.extend(args(["-vf", &format!("crop=w='{side}':h='{side}'")]));
+        }
         a.extend(args(["-frames:v", "1", "-q:v", "2"]));
         a.push(dest.display().to_string());
         let out = process::run(&self.ffmpeg, &a, Duration::from_secs(60), None)
@@ -415,6 +424,46 @@ pub mod tests {
         };
     }
     pub(crate) use need;
+
+    #[tokio::test]
+    async fn covers_are_cropped_to_the_centre_square() {
+        need!("ffmpeg", "ffprobe");
+        let dir = tempfile::tempdir().unwrap();
+        let tools = Tools::default();
+        // hqdefault (4:3 with bars), maxresdefault (16:9), already square.
+        for ((w, h), side) in [((480, 360), 270), ((1280, 720), 720), ((500, 500), 500)] {
+            let src = dir.path().join("src.jpg");
+            let made = std::process::Command::new("ffmpeg")
+                .args(["-nostdin", "-v", "error", "-y", "-f", "lavfi", "-i"])
+                .arg(format!("color=red:s={w}x{h}"))
+                .args(["-frames:v", "1"])
+                .arg(&src)
+                .status()
+                .unwrap();
+            assert!(made.success());
+            let image = std::fs::read(&src).unwrap();
+            let out = tools.to_jpeg(&image, dir.path(), true).await.unwrap();
+            let probe = dir.path().join("out.jpg");
+            std::fs::write(&probe, &out).unwrap();
+            let dims = std::process::Command::new("ffprobe")
+                .args([
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "stream=width,height",
+                    "-of",
+                    "csv=p=0",
+                ])
+                .arg(&probe)
+                .output()
+                .unwrap();
+            assert_eq!(
+                String::from_utf8_lossy(&dims.stdout).trim(),
+                format!("{side},{side}"),
+                "{w}x{h}"
+            );
+        }
+    }
 
     #[tokio::test]
     async fn dash_aac_is_remuxed_to_plain_faststart_mp4() {

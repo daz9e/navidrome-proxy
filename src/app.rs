@@ -104,7 +104,6 @@ pub fn build_services(settings: Settings, o: Overrides) -> anyhow::Result<Arc<Se
     let finder = Arc::new(Sources::new(settings.duration_tolerance_seconds, backend));
     let fetcher: Arc<dyn Fetcher> = o.fetcher.unwrap_or_else(|| finder.clone());
     let library = Arc::new(Library::new(&settings.music_dir, settings.staging_dir()));
-    let covers = Arc::new(Covers::new(&settings.cache_dir().join("covers")));
     let intents = Arc::new(Intents::new(
         store.clone(),
         identity.clone(),
@@ -145,6 +144,8 @@ pub fn build_services(settings: Settings, o: Overrides) -> anyhow::Result<Arc<Se
         ffprobe: settings.ffprobe_path.clone(),
         fpcalc: settings.fpcalc_path.clone(),
     };
+    let covers =
+        Arc::new(Covers::new(&settings.cache_dir().join("covers")).with_tools(tools.clone()));
     let pipeline = Arc::new(Pipeline {
         settings: settings.clone(),
         store: store.clone(),

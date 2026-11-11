@@ -130,7 +130,8 @@ async fn main() {
         return;
     }
     let store = Arc::new(Store::open(&settings.db_path()).unwrap_or_else(|e| fail(e)));
-    let covers = || covers::Covers::new(&settings.cache_dir().join("covers"));
+    let covers =
+        || covers::Covers::new(&settings.cache_dir().join("covers")).with_tools(tools.clone());
     let result = match command {
         Command::MigrateLegacy {
             state,
