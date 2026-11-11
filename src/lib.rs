@@ -8,6 +8,7 @@ pub mod covers;
 pub mod db;
 pub mod deezer;
 pub mod identity;
+pub mod imports;
 pub mod ids;
 pub mod library;
 pub mod intents;
