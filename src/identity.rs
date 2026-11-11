@@ -12,7 +12,8 @@
 //!   from YouTube video V makes `yt:V` an alias), the ISRC, and ids linked by the
 //!   catalog reconciler;
 //! * recording keys – "primary artist | base title" plus duration (±3 s), which finds
-//!   the same song across catalogs without any shared id.
+//!   the same song across catalogs without any shared id. Version markers are part
+//!   of the key ("| speed"), so a slowed upload never stands in for the original.
 
 use crate::db::{Store, Track};
 use crate::util::{Json, as_f64, as_str};
@@ -25,7 +26,18 @@ pub const DURATION_SLACK: f64 = 3.0;
 pub fn recording_key(artists: &[String], title: &str) -> Option<String> {
     let lead = matching::normalize(artists.first().map(String::as_str).unwrap_or(""));
     let base = matching::base_title(title);
-    (!lead.is_empty() && !base.is_empty()).then(|| format!("{lead}|{base}"))
+    if lead.is_empty() || base.is_empty() {
+        return None;
+    }
+    let markers = matching::markers(title);
+    Some(if markers.is_empty() {
+        format!("{lead}|{base}")
+    } else {
+        format!(
+            "{lead}|{base}|{}",
+            markers.into_iter().collect::<Vec<_>>().join(",")
+        )
+    })
 }
 
 /// The artists of a meta dict: its `artists` list, else its `artist` credit split.
@@ -226,6 +238,11 @@ mod tests {
             Some("tveth|hella quality")
         );
         assert_eq!(recording_key(&[], "x"), None);
+        assert_eq!(
+            recording_key(&["FORTUNA 812".into()], "Black Water (slowed + reverb)").as_deref(),
+            Some("fortuna 812|black water|speed"),
+            "a version is another recording"
+        );
     }
 
     #[test]

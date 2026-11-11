@@ -69,6 +69,7 @@ pub const VERSION_MARKERS: &[(&str, &[&str])] = &[
         ],
     ),
     ("acoustic", &["acoustic", "акустик"]),
+    ("tiktok", &["tiktok", "tik tok"]),
     ("extended", &["extended", "club mix", "radio edit", "edit"]),
     (
         "demo",
@@ -84,6 +85,8 @@ pub const VERSION_MARKERS: &[(&str, &[&str])] = &[
             "1 час",
             "10 часов",
             "час версия",
+            "looped",
+            "best part",
         ],
     ),
 ];
@@ -239,6 +242,69 @@ pub fn markers(text: &str) -> BTreeSet<&'static str> {
         }
     }
     found
+}
+
+fn latin_words(text: &str) -> Vec<String> {
+    latin(text).split_whitespace().map(String::from).collect()
+}
+
+/// Word position where `name` stands in `text`, whatever the punctuation, alphabet or
+/// spacing around it ("FORTUNA 812" in "фортуна⋆812 - Рассвет" and "fortuna812-клуб88"),
+/// allowing a typo in longer words ("Childish Gabino").
+pub fn find_name(text: &str, name: &str) -> Option<usize> {
+    let (hay, needle) = (latin_words(text), latin_words(name));
+    if needle.is_empty() {
+        return None;
+    }
+    let glued = needle.concat();
+    let same = |h: &String, n: &String| {
+        h == n || (h.chars().count() >= 5 && n.chars().count() >= 5 && ratio(h, n) >= 0.9)
+    };
+    (0..hay.len()).find(|&i| {
+        (needle.len() > 1 && hay[i] == glued)
+            || hay
+                .get(i..i + needle.len())
+                .is_some_and(|w| w.iter().zip(&needle).all(|(h, n)| same(h, n)))
+    })
+}
+
+/// Normalized words of a video title worth a catalog search: no channel noise, no
+/// version words ("slowed", "reverb"), and without bracketed parts unless `brackets`.
+pub fn search_text(title: &str, brackets: bool) -> String {
+    static VERSION_WORDS: LazyLock<HashSet<String>> = LazyLock::new(|| {
+        VERSION_MARKERS
+            .iter()
+            .flat_map(|(_, variants)| variants.iter())
+            .flat_map(|v| words(v))
+            .filter(|w| w.chars().count() >= 3)
+            .collect()
+    });
+    let mut text = VIDEO_NOISE.replace_all(title, " ").into_owned();
+    if !brackets {
+        text = BRACKETS.replace_all(&text, " ").into_owned();
+    }
+    normalize(&text)
+        .split(' ')
+        .filter(|w| !w.is_empty() && !VERSION_WORDS.contains(*w))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Parts of a title worth looking up as names: first split at punctuation next to a
+/// space or brackets ("Elox1m & FORTUNA 812 -- Порезы (slowed)", keeping "фортуна⋆812"
+/// whole), then at any punctuation ("фортуна812-клуб88").
+pub fn segments(title: &str) -> Vec<String> {
+    static SPACED: LazyLock<Regex> =
+        LazyLock::new(|| re(r"\s+[^\p{L}\p{N}\s']+\s*|\s*[^\p{L}\p{N}\s']+\s+|[()\[\]{}]"));
+    static ANY: LazyLock<Regex> = LazyLock::new(|| re(r"[^\p{L}\p{N}\s']+"));
+    let mut seen = HashSet::new();
+    SPACED
+        .split(title)
+        .chain(ANY.split(title))
+        .map(str::trim)
+        .filter(|s| !search_text(s, true).is_empty() && seen.insert(normalize(s)))
+        .map(String::from)
+        .collect()
 }
 
 /// `difflib.SequenceMatcher(None, a, b).ratio()`, including its autojunk heuristic.
@@ -742,6 +808,8 @@ mod tests {
             ("Black Water", &[]),
             ("Deliver (Beatdown)", &[]),
             ("Life Is Live", &["live"]),
+            ("i can't feel my face x les _ tiktok version", &["tiktok"]),
+            ("les. [slowed + best part + looped]", &["loop", "speed"]),
         ];
         for (title, expected) in cases {
             assert_eq!(
@@ -897,6 +965,69 @@ mod tests {
         };
         let scored = src(&wanted, "Ave Maria", "A - Topic", Some(200.0));
         assert!(scored.rejected.is_none(), "{scored:?}");
+    }
+
+    #[test]
+    fn find_name_ignores_separators_alphabet_and_spacing() {
+        let hits: &[(&str, &str, usize)] = &[
+            (
+                "Elox1m & FORTUNA 812 -- Порезы на руках (slowed)",
+                "FORTUNA 812",
+                1,
+            ),
+            ("фортуна⋆812 - Рассвет", "FORTUNA 812", 0),
+            ("СНОВа.-фортуна812", "FORTUNA 812", 1),
+            ("Кошмар — FORTUNA 812", "FORTUNA 812", 1),
+            (
+                "reflections the neighbourhood slowed",
+                "The Neighbourhood",
+                1,
+            ),
+            ("Here-Alessia Cara (Slowed Down)", "Alessia Cara", 1),
+            ("childish Gabino- “oh girl”", "Childish Gambino", 0),
+            ("𝙝𝙤𝙪𝙨𝙚 𝙤𝙛 𝙗𝙖𝙡𝙡𝙤𝙤𝙣𝙨 - 𝙨𝙡𝙤𝙬𝙚𝙙", "House of Balloons", 0),
+        ];
+        for (text, name, at) in hits {
+            assert_eq!(find_name(text, name), Some(*at), "{name} in {text}");
+        }
+        for (text, name) in [
+            ("The Neighbors - Sweater Weather", "The Neighbourhood"),
+            ("lez - slowed", "les"), // no typo allowance in short words
+            ("fortunate", "FORTUNA"),
+            ("anything", ""),
+        ] {
+            assert_eq!(find_name(text, name), None, "{name} in {text}");
+        }
+    }
+
+    #[test]
+    fn search_text_drops_noise_and_version_words() {
+        let t = "Russ - 3:15 (Breathe) ~ Slowed + Reverb More (3:15 AM version)";
+        assert_eq!(search_text(t, false), "russ 3 15 more");
+        assert_eq!(
+            search_text("FORTUNA 812 - Black Water (Official Audio) [sped up]", true),
+            "fortuna 812 black water up"
+        );
+        assert_eq!(
+            search_text("les. [slowed + best part + looped]", false),
+            "les"
+        );
+    }
+
+    #[test]
+    fn segments_split_coarse_then_fine() {
+        assert_eq!(
+            segments("Elox1m & FORTUNA 812 -- Порезы на руках (slowed)"),
+            ["Elox1m", "FORTUNA 812", "Порезы на руках"]
+        );
+        assert_eq!(
+            segments("фортуна⋆812 - Рассвет"),
+            ["фортуна⋆812", "Рассвет", "фортуна", "812"]
+        );
+        assert_eq!(
+            segments("фортуна812-клуб88"),
+            ["фортуна812-клуб88", "фортуна812", "клуб88"]
+        );
     }
 
     #[test]
