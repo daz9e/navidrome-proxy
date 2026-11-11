@@ -14,6 +14,7 @@ pub mod library;
 pub mod intents;
 pub mod lyrics;
 pub mod matching;
+pub mod migrate;
 pub mod navidrome;
 pub mod pipeline;
 pub mod process;

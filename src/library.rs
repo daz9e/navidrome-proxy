@@ -42,6 +42,22 @@ static UNSAFE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"[\x00-\x1f/\\:*?
 /// suffix and publish's `.<name>.<hex>.part` temp name within ext4's 255 bytes.
 const MAX_NAME_BYTES: usize = 180;
 
+/// Every file below `dir` (symlinked folders are not followed), sorted.
+pub fn files_under(dir: &Path) -> Vec<PathBuf> {
+    let (mut out, mut stack) = (Vec::new(), vec![dir.to_path_buf()]);
+    while let Some(d) = stack.pop() {
+        for entry in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+            match entry.file_type() {
+                Ok(t) if t.is_dir() => stack.push(entry.path()),
+                Ok(_) => out.push(entry.path()),
+                Err(_) => {}
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
 /// The id token embedded in file names: `deezer-<id>`, `yt-<video id>` or `sc-<id>`.
 pub fn file_stem(track_id: &str) -> Option<String> {
     let vid = ids::parse(track_id).filter(|v| v.is_track())?;

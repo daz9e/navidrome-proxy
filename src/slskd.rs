@@ -244,18 +244,7 @@ impl Slskd {
                 return Some(direct);
             }
         }
-        let mut stack = vec![self.downloads_dir.clone()];
-        while let Some(dir) = stack.pop() {
-            for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
-                let path = entry.path();
-                if entry.file_type().is_ok_and(|t| t.is_dir()) {
-                    stack.push(path);
-                } else if entry.file_name().to_str() == Some(name) && fits(&path) {
-                    return Some(path);
-                }
-            }
-        }
-        None
+        crate::library::files_under(&self.downloads_dir).into_iter().find(|p| p.file_name().and_then(|n| n.to_str()) == Some(name) && fits(p))
     }
 }
 
