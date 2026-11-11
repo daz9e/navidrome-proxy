@@ -4,7 +4,9 @@
 //!
 //! ```text
 //! <album artist>/<album>/<disc>-<track> - <title> [deezer-<id>].m4a
-//! <artist>/YouTube/<title> [yt-<video id>].m4a
+//! <artist>/Unofficial/<upload title> [yt-<video id>].m4a   (see `unofficial`)
+//! Custom/Custom/<upload title> [yt-<video id>].m4a
+//! <uploader>/YouTube/<title> [yt-<video id>].m4a           (not placed yet)
 //! ```
 //!
 //! The `[deezer-<id>]` token keeps the file tied to its catalog entry, and the

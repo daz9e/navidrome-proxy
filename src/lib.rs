@@ -30,4 +30,5 @@ pub mod tagging;
 pub mod tasks;
 #[cfg(test)]
 pub mod testutil;
+pub mod unofficial;
 pub mod util;

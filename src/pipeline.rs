@@ -11,6 +11,7 @@ use crate::library::{Indexer, Library};
 use crate::matching::Wanted;
 use crate::sources::{Candidate, SourceError, Sources};
 use crate::tasks::Background;
+use crate::unofficial::{self, Placement};
 use crate::util::{Json, as_f64, as_str, opt_str, truthy};
 use futures::future::BoxFuture;
 use serde_json::{Value, json};
@@ -270,10 +271,38 @@ impl Pipeline {
         staging: &Path,
     ) -> Result<Track, SourceError> {
         let started = std::time::Instant::now();
-        let raw = self
-            .fetcher
-            .download(cand, staging, Duration::from_secs(300), cancel)
-            .await?;
+        let upload = track.id.starts_with("yt:") || track.id.starts_with("sc:");
+        let placing =
+            upload && !truthy(meta.get("album")) && cand.album.as_deref().unwrap_or("").is_empty();
+        // Decided while the audio downloads: a few cached Deezer searches.
+        let place = async {
+            if !placing {
+                return None;
+            }
+            // Placeholders for "no uploader known", not names.
+            let uploader = match cand.uploader.as_str() {
+                "YouTube" | "SoundCloud" => "",
+                u => u,
+            };
+            let title = as_str(meta.get("title"));
+            let duration = as_f64(meta.get("duration")).filter(|d| *d > 0.0);
+            match unofficial::place(&self.deezer, &title, uploader, duration).await {
+                Ok(p) => Some(p),
+                Err(e) => {
+                    tracing::warn!(
+                        "{}: not placed ({e}); adopt-unofficial does it later",
+                        track.id
+                    );
+                    None
+                }
+            }
+        };
+        let (raw, placement) = tokio::join!(
+            self.fetcher
+                .download(cand, staging, Duration::from_secs(300), cancel),
+            place
+        );
+        let raw = raw?;
         let fetched = started.elapsed().as_secs_f64();
         let (prepared, info) = self
             .tools
@@ -299,10 +328,29 @@ impl Pipeline {
         {
             tag_meta.insert("album".into(), json!(album));
         }
+        if let Some(p) = &placement {
+            unofficial::apply(&mut tag_meta, p);
+        }
         let cover_url = opt_str(tag_meta.get("cover"))
             .or_else(|| cand.thumbnail.clone())
             .unwrap_or_default();
-        let cover = cover_for_tags(&self.covers, &self.tools, &cover_url, staging).await;
+        let mut cover = None;
+        if crate::covers::is_video_thumbnail(&cover_url)
+            && matches!(
+                placement,
+                Some(Placement::Unofficial { .. } | Placement::Custom)
+            )
+        {
+            // The largest thumbnail, without bars; older videos have none.
+            let maxres = format!(
+                "https://i.ytimg.com/vi/{}/maxresdefault.jpg",
+                cand.reference
+            );
+            cover = cover_for_tags(&self.covers, &self.tools, &maxres, staging).await;
+        }
+        if cover.is_none() {
+            cover = cover_for_tags(&self.covers, &self.tools, &cover_url, staging).await;
+        }
         let (path, tags) = (prepared.clone(), tag_meta.clone());
         tokio::task::spawn_blocking(move || {
             crate::tagging::write_tags(&path, &tags, cover.as_deref())
@@ -339,9 +387,12 @@ impl Pipeline {
                 Field::Error(None),
             ],
         );
-        if tag_meta.get("album") != meta.get("album") {
-            let mut patch = Json::new();
-            patch.insert("album".into(), tag_meta["album"].clone());
+        let patch: Json = tag_meta
+            .iter()
+            .filter(|(k, v)| meta.get(*k) != Some(*v))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        if !patch.is_empty() {
             self.store.remember_track(&track.id, &patch);
         }
         let fresh = self
@@ -349,6 +400,25 @@ impl Pipeline {
             .get_track(&track.id)
             .ok_or_else(|| SourceError::new("track vanished", true))?;
         self.identity.register(&fresh);
+        if let Some(Placement::Official(full)) = &placement {
+            let deezer_id = as_str(full.get("deezer_id"));
+            if !deezer_id.is_empty() {
+                self.identity
+                    .link(&ids::track(&deezer_id), &track.id, "official");
+            }
+        }
+        if let Some(url) = opt_str(tag_meta.get("album_cover"))
+            && as_str(tag_meta.get("album")) == unofficial::UNOFFICIAL
+        {
+            // Navidrome prefers a folder cover.jpg over the tracks' own art for the album.
+            let folder_cover = dest.with_file_name("cover.jpg");
+            if !folder_cover.exists()
+                && let Some((data, _)) = self.covers.get(&url).await
+                && let Err(e) = std::fs::write(&folder_cover, data)
+            {
+                tracing::warn!("cannot write {}: {e}", folder_cover.display());
+            }
+        }
         if let Some(indexer) = &self.indexer {
             indexer.notify();
         }
@@ -701,7 +771,7 @@ pub mod tests {
     async fn same_recording_under_another_id_is_not_downloaded_again() {
         need!("ffmpeg");
         let w = World::new().await;
-        w.remember("sc:77", json!({"title": "Hella Quality", "artists": ["TVETH"], "duration": 31, "url": "https://soundcloud/77"}));
+        w.remember("sc:77", json!({"title": "Hella Quality", "artists": ["TVETH"], "artist": "TVETH", "duration": 31, "url": "https://soundcloud/77"}));
         let f = fetcher(vec![], &[("77", Some(31))]);
         let p = w.pipeline(f.clone());
         let c = CancellationToken::new();
@@ -764,11 +834,82 @@ pub mod tests {
             (f.fetched.lock().clone(), *f.finds.lock()),
             (vec!["sO4pSj466Hk".to_string()], 0)
         );
+        // Nobody the catalog knows: Custom, under the upload's own title.
+        let file = track.file.unwrap();
+        assert!(
+            file.ends_with("Custom/Custom/Кошмар [yt-sO4pSj466Hk].m4a"),
+            "{file}"
+        );
+        let tags = crate::tagging::read_tags(Path::new(&file));
+        assert_eq!(
+            (tags["artist"][0].as_str(), tags["album"][0].as_str()),
+            ("Custom", "Custom")
+        );
+    }
+
+    #[tokio::test]
+    async fn upload_of_a_catalog_version_goes_to_the_artists_unofficial_album() {
+        need!("ffmpeg");
+        let w = World::new().await;
+        w.remember(
+            "yt:AAAAAAAAAAA",
+            json!({"title": "TVETH - Hella Quality (slowed)", "artist": "slowed vibes", "duration": 30}),
+        );
+        let track = w
+            .pipeline(fetcher(vec![], &[]))
+            .download("yt:AAAAAAAAAAA", &CancellationToken::new())
+            .await
+            .unwrap();
+        let file = track.file.clone().unwrap();
+        assert!(
+            file.ends_with("TVETH/Unofficial/TVETH - Hella Quality (slowed) [yt-AAAAAAAAAAA].m4a"),
+            "{file}"
+        );
+        let tags = crate::tagging::read_tags(Path::new(&file));
+        assert_eq!(
+            (
+                tags["artist"][0].as_str(),
+                tags["albumartist"][0].as_str(),
+                tags["album"][0].as_str(),
+                tags["title"][0].as_str()
+            ),
+            (
+                "TVETH",
+                "TVETH",
+                "Unofficial",
+                "TVETH - Hella Quality (slowed)"
+            )
+        );
+        // Remembered, and never mistaken for the original.
+        assert_eq!(track.meta["album"], "Unofficial");
+        assert_ne!(
+            Identity::new(w.store.clone()).canonical("deezer:1"),
+            track.id
+        );
+    }
+
+    #[tokio::test]
+    async fn upload_of_the_catalog_recording_is_tagged_as_it() {
+        need!("ffmpeg");
+        let w = World::new().await;
+        w.remember(
+            "yt:BBBBBBBBBBB",
+            json!({"title": "Hella Quality", "artist": "TVETH", "duration": 30}),
+        );
+        let track = w
+            .pipeline(fetcher(vec![], &[]))
+            .download("yt:BBBBBBBBBBB", &CancellationToken::new())
+            .await
+            .unwrap();
         assert!(
             track
                 .file
                 .unwrap()
-                .ends_with("ЮПИ/YouTube/Кошмар [yt-sO4pSj466Hk].m4a")
+                .ends_with("TVETH/RAW/1-03 - Hella Quality [yt-BBBBBBBBBBB].m4a")
+        );
+        assert_eq!(
+            Identity::new(w.store.clone()).canonical("deezer:1"),
+            "yt:BBBBBBBBBBB"
         );
     }
 
