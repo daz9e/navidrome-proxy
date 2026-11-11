@@ -489,12 +489,20 @@ async fn empty_query_sync_is_passthrough() {
 async fn prefixed_queries_search_only_youtube_or_soundcloud() {
     let backend = FakeBackend {
         ytm: vec![ytm("CCCCCCCCCCC", "Anything", 100.0)],
-        flat: vec![(
-            "scsearch15:".into(),
-            vec![crate::testutil::m(
-                json!({"id": 77, "title": "Mix", "uploader": "DJ", "duration": 300, "url": "https://soundcloud.com/dj/mix"}),
-            )],
-        )],
+        flat: vec![
+            (
+                "scsearch15:".into(),
+                vec![crate::testutil::m(
+                    json!({"id": 77, "title": "Mix", "uploader": "DJ", "duration": 300, "url": "https://soundcloud.com/dj/mix"}),
+                )],
+            ),
+            (
+                "https://www.youtube.com/watch?v=EEEEEEEEEEE".into(),
+                vec![crate::testutil::m(
+                    json!({"id": "EEEEEEEEEEE", "title": "FORTUNA 812 - Black Water (slowed)", "channel": "slowed vibes", "duration": 190}),
+                )],
+            ),
+        ],
         ..Default::default()
     };
     let w = world_with(backend).await;
@@ -520,6 +528,23 @@ async fn prefixed_queries_search_only_youtube_or_soundcloud() {
         )
         .await;
     assert_eq!(ids(&video["searchResult3"]["song"]), ["yt:DDDDDDDDDDD"]);
+    // Unknown to YouTube Music: the title and channel come from yt-dlp.
+    let meta = w.s.store.get_track("yt:EEEEEEEEEEE");
+    assert!(meta.is_none());
+    w.json(
+        "search3",
+        "query=https://youtu.be/EEEEEEEEEEE?list=RDx&songCount=10&albumCount=0&artistCount=0",
+    )
+    .await;
+    let track = w.s.store.get_track("yt:EEEEEEEEEEE").unwrap();
+    assert_eq!(
+        (track.title(), track.artist(), track.duration()),
+        (
+            "FORTUNA 812 - Black Water (slowed)".to_string(),
+            "slowed vibes".to_string(),
+            190.0
+        )
+    );
 }
 
 // ----------------------------------------------------------------- browsing

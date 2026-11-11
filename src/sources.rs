@@ -892,6 +892,10 @@ impl Backend for YtBackend {
                 return Err(crate::util::tail(&out.stderr_text(), 300));
             }
             let info: Value = serde_json::from_slice(&out.stdout).map_err(|e| e.to_string())?;
+            if info.get("entries").is_none() && info.get("id").is_some() {
+                // A single video URL: its own metadata.
+                return Ok(info.as_object().cloned().into_iter().collect());
+            }
             Ok(info
                 .get("entries")
                 .and_then(Value::as_array)

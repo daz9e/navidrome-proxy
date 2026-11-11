@@ -22,7 +22,7 @@ use crate::navidrome::NdError;
 use crate::sources::YtmTrack;
 use crate::subsonic::models;
 use crate::subsonic::params::CREDENTIAL_KEYS;
-use crate::util::{Json, as_str, as_uint, obj, opt_str};
+use crate::util::{Json, as_f64, as_str, as_uint, obj, opt_str};
 use regex::Regex;
 use serde_json::{Value, json};
 use std::collections::HashSet;
@@ -310,10 +310,22 @@ async fn youtube_video(s: &Services, video_id: &str) -> Result<Vec<YtmTrack>, St
     if let Some(exact) = rows.into_iter().find(|r| r.video_id == video_id) {
         return Ok(vec![exact]);
     }
+    // Unknown to YouTube Music: yt-dlp knows the real title and channel, which decide
+    // where the upload lands (`unofficial`). Bounded, so a slow lookup still lists it.
+    let limit = Duration::from_secs_f64(s.settings.search_budget_seconds.max(0.0) * 0.75);
+    let url = format!("https://www.youtube.com/watch?v={video_id}");
+    let info = tokio::time::timeout(limit, s.finder.flat_search(&url))
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .find(|e| as_str(e.get("id")) == video_id)
+        .unwrap_or_default();
+    let channel = opt_str(info.get("channel")).or_else(|| opt_str(info.get("uploader")));
     Ok(vec![YtmTrack {
         video_id: video_id.into(),
-        title: video_id.into(),
-        artists: vec!["YouTube".into()],
+        title: opt_str(info.get("title")).unwrap_or_else(|| video_id.into()),
+        artists: vec![channel.unwrap_or_else(|| "YouTube".into())],
+        duration: as_f64(info.get("duration")),
         thumbnail: Some(format!("https://i.ytimg.com/vi/{video_id}/hqdefault.jpg")),
         ..Default::default()
     }])
