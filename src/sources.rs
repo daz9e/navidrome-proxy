@@ -108,13 +108,16 @@ pub trait Backend: Send + Sync {
 pub struct Sources {
     pub tolerance: f64,
     pub backend: Arc<dyn Backend>,
+    /// How long a 403 on a just-resolved googlevideo URL is retried: YouTube refuses
+    /// such URLs for roughly the first second (measured), then serves them.
+    pub fresh_url_grace: Duration,
     http: reqwest::Client,
 }
 
 impl Sources {
     pub fn new(tolerance: f64, backend: Arc<dyn Backend>) -> Self {
         let http = reqwest::Client::builder().connect_timeout(Duration::from_secs(10)).build().expect("http client");
-        Self { tolerance, backend, http }
+        Self { tolerance, backend, fresh_url_grace: Duration::from_secs(5), http }
     }
 
     // --------------------------------------------------------------- search
@@ -245,7 +248,7 @@ impl Sources {
                 _ = cancel.cancelled() => return Err(SourceError::Cancelled),
                 info = self.backend.resolve(cand.url.clone(), format) => info?,
             };
-            match fetch_direct(&self.http, &info, dest_dir, deadline, 4, cancel).await {
+            match fetch_direct(&self.http, &info, dest_dir, deadline, 4, self.fresh_url_grace, cancel).await {
                 Ok(path) => return Ok(path),
                 Err(SourceError::Cancelled) => return Err(SourceError::Cancelled),
                 Err(e) => tracing::info!("{}: direct fetch failed ({e}); using yt-dlp", cand.reference),
@@ -266,6 +269,7 @@ pub async fn fetch_direct(
     dest_dir: &Path,
     deadline: Instant,
     parts: u64,
+    grace: Duration,
     cancel: &CancellationToken,
 ) -> Result<PathBuf, SourceError> {
     let url = as_str(info.get("url"));
@@ -285,10 +289,19 @@ pub async fn fetch_direct(
     let chunk = (256 * 1024).max(size.div_ceil(parts.max(1)));
     let ranges: Vec<(u64, u64)> = (0..size).step_by(chunk as usize).map(|start| (start, (start + chunk).min(size) - 1)).collect();
     let remaining = deadline.saturating_duration_since(Instant::now()).max(Duration::from_secs(5));
+    let started = Instant::now();
     let one = |first: u64, last: u64| {
         let request = http.get(&url).headers(headers.clone()).header("Range", format!("bytes={first}-{last}")).timeout(remaining);
         async move {
-            let response = request.send().await.map_err(|e| SourceError::new(format!("direct fetch: {e}"), true))?;
+            let response = loop {
+                let attempt = request.try_clone().ok_or_else(|| SourceError::new("direct fetch: request not clonable", true))?;
+                let response = attempt.send().await.map_err(|e| SourceError::new(format!("direct fetch: {e}"), true))?;
+                if response.status().as_u16() == 403 && started.elapsed() < grace {
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                    continue;
+                }
+                break response;
+            };
             if response.status().as_u16() != 206 {
                 return Err(SourceError::new(format!("direct fetch: HTTP {}", response.status().as_u16()), true));
             }
@@ -454,6 +467,10 @@ pub struct YtBackend {
     visitor: tokio::sync::OnceCell<Option<String>>,
     pub ytdlp: String,
     pub ytdlp_args: Vec<String>,
+    /// YouTube player client tried first when resolving (`visionos`: ~2.5 s instead of
+    /// ~4.8 s, and its URLs are served at once while the default ones answer 403 for
+    /// about a second). yt-dlp's own defaults are the fallback.
+    pub fast_client: Option<String>,
 }
 
 impl YtBackend {
@@ -464,7 +481,7 @@ impl YtBackend {
             .user_agent(USER_AGENT)
             .build()
             .expect("http client");
-        Self { http, ytmusic_url: ytmusic_url.trim_end_matches('/').into(), visitor: Default::default(), ytdlp: ytdlp.into(), ytdlp_args }
+        Self { http, ytmusic_url: ytmusic_url.trim_end_matches('/').into(), visitor: Default::default(), ytdlp: ytdlp.into(), ytdlp_args, fast_client: None }
     }
 
     async fn visitor_id(&self) -> Option<String> {
@@ -517,6 +534,19 @@ impl YtBackend {
         }
         rows.truncate(limit);
         Ok(rows)
+    }
+
+    async fn resolve_with(&self, url: &str, format: &str, client: &[&str]) -> Result<Json, SourceError> {
+        let mut extra: Vec<&str> = client.to_vec();
+        extra.extend(["-J", "--no-playlist", "-f", format, "--no-warnings", "--socket-timeout", "20", "--", url]);
+        let out = process::run(&self.ytdlp, &self.ytdlp_command(&extra), Duration::from_secs(90), None).await.map_err(run_error)?;
+        if !out.success() {
+            return Err(ytdlp_error(&out.stderr_text()));
+        }
+        serde_json::from_slice::<Value>(&out.stdout)
+            .ok()
+            .and_then(|v| v.as_object().cloned())
+            .ok_or_else(|| SourceError::new("yt-dlp printed no JSON", true))
     }
 
     fn ytdlp_command(&self, extra: &[&str]) -> Vec<String> {
@@ -577,15 +607,14 @@ impl Backend for YtBackend {
 
     fn resolve(&self, url: String, format: &'static str) -> BoxFuture<'_, Result<Json, SourceError>> {
         async move {
-            let args = self.ytdlp_command(&["-J", "--no-playlist", "-f", format, "--no-warnings", "--socket-timeout", "20", "--", &url]);
-            let out = process::run(&self.ytdlp, &args, Duration::from_secs(90), None).await.map_err(run_error)?;
-            if !out.success() {
-                return Err(ytdlp_error(&out.stderr_text()));
+            let chosen = self.ytdlp_args.iter().any(|a| a.contains("player_client"));
+            if let Some(client) = self.fast_client.as_deref().filter(|c| !c.is_empty() && !chosen) {
+                match self.resolve_with(&url, format, &["--extractor-args", &format!("youtube:player_client={client}")]).await {
+                    Ok(info) => return Ok(info),
+                    Err(e) => tracing::info!("{client} resolve of {url} failed ({e}); using yt-dlp defaults"),
+                }
             }
-            serde_json::from_slice::<Value>(&out.stdout)
-                .ok()
-                .and_then(|v| v.as_object().cloned())
-                .ok_or_else(|| SourceError::new("yt-dlp printed no JSON", true))
+            self.resolve_with(&url, format, &[]).await
         }
         .boxed()
     }
@@ -752,6 +781,11 @@ pub mod tests {
     }
 
     async fn range_server(status: u16) -> (crate::testutil::Server, Arc<Mutex<Vec<String>>>) {
+        range_server_refusing(status, 0).await
+    }
+
+    /// Answers `status` after refusing the first `refusals` requests with 403.
+    async fn range_server_refusing(status: u16, refusals: usize) -> (crate::testutil::Server, Arc<Mutex<Vec<String>>>) {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let s = seen.clone();
         let router = axum::Router::new().route(
@@ -760,9 +794,14 @@ pub mod tests {
                 let s = s.clone();
                 async move {
                     let range = headers["range"].to_str().unwrap().trim_start_matches("bytes=").to_string();
-                    s.lock().push(range.clone());
+                    let n = {
+                        let mut seen = s.lock();
+                        seen.push(range.clone());
+                        seen.len()
+                    };
                     let (a, b) = range.split_once('-').unwrap();
                     let (a, b): (usize, usize) = (a.parse().unwrap(), b.parse().unwrap());
+                    let status = if n <= refusals { 403 } else { status };
                     if status != 206 {
                         return axum::response::Response::builder().status(status).body(axum::body::Body::empty()).unwrap();
                     }
@@ -782,17 +821,29 @@ pub mod tests {
         let (server, seen) = range_server(206).await;
         let dir = tempfile::tempdir().unwrap();
         let token = CancellationToken::new();
-        let path = fetch_direct(&reqwest::Client::new(), &info(&server.url), dir.path(), Instant::now() + Duration::from_secs(30), 4, &token).await.unwrap();
+        let path = fetch_direct(&reqwest::Client::new(), &info(&server.url), dir.path(), Instant::now() + Duration::from_secs(30), 4, Duration::ZERO, &token).await.unwrap();
         assert_eq!(path.file_name().unwrap(), "source.m4a");
         assert_eq!(std::fs::read(&path).unwrap(), body());
         assert_eq!(seen.lock().len(), 4);
     }
 
     #[tokio::test]
+    async fn direct_fetch_waits_out_the_403_of_a_fresh_url() {
+        let (server, seen) = range_server_refusing(206, 2).await;
+        let dir = tempfile::tempdir().unwrap();
+        let token = CancellationToken::new();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let path = fetch_direct(&reqwest::Client::new(), &info(&server.url), dir.path(), deadline, 4, Duration::from_secs(5), &token).await.unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), body());
+        assert_eq!(seen.lock().len(), 6, "two refused requests were retried");
+    }
+
+    #[tokio::test]
     async fn download_falls_back_to_ytdlp_when_the_direct_fetch_is_refused() {
         let (server, _) = range_server(403).await;
         let dir = tempfile::tempdir().unwrap();
-        let (f, backend) = finder(FakeBackend { info: Some(info(&server.url)), download_ext: Some("webm".into()), ..Default::default() });
+        let (mut f, backend) = finder(FakeBackend { info: Some(info(&server.url)), download_ext: Some("webm".into()), ..Default::default() });
+        f.fresh_url_grace = Duration::from_millis(300);
         let cand = Candidate { source: "youtube".into(), url: "https://youtube.com/watch?v=x".into(), ..Default::default() };
         let path = f.download(&cand, &dir.path().join("job"), Duration::from_secs(30), &CancellationToken::new()).await.unwrap();
         assert_eq!(path.file_name().unwrap(), "source.webm");
@@ -804,7 +855,7 @@ pub mod tests {
         let dir = tempfile::tempdir().unwrap();
         let token = CancellationToken::new();
         let hls = m(json!({"url": "https://x/m.m3u8", "protocol": "m3u8_native"}));
-        assert!(fetch_direct(&reqwest::Client::new(), &hls, dir.path(), Instant::now(), 4, &token).await.is_err());
+        assert!(fetch_direct(&reqwest::Client::new(), &hls, dir.path(), Instant::now(), 4, Duration::ZERO, &token).await.is_err());
 
         let (server, _) = range_server(206).await;
         let (f, backend) = finder(FakeBackend { info: Some(info(&server.url)), ..Default::default() });
@@ -868,5 +919,29 @@ pub mod tests {
         let body = &seen.lock()[0];
         assert_eq!(body["params"], "EgWKAQIIAWoMEA4QChADEAQQCRAF");
         assert_eq!(body["context"]["client"]["clientName"], "WEB_REMIX");
+    }
+
+    #[tokio::test]
+    async fn resolve_tries_the_fast_client_first_then_yt_dlp_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let (log, script) = (dir.path().join("calls"), dir.path().join("yt-dlp"));
+        let body = format!(
+            "#!/bin/sh\necho \"$*\" >> {log}\ncase \"$*\" in *player_client=visionos*) [ -f {ok} ] && {{ echo '{{\"url\":\"fast\"}}'; exit 0; }}; echo 'ERROR: no' >&2; exit 1;; esac\necho '{{\"url\":\"default\"}}'\n",
+            log = log.display(),
+            ok = dir.path().join("fast-ok").display()
+        );
+        std::fs::write(&script, body).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut backend = YtBackend::new("http://unused", script.to_str().unwrap(), vec![]);
+        backend.fast_client = Some("visionos".into());
+        let calls = || std::fs::read_to_string(&log).unwrap_or_default().lines().count();
+        assert_eq!(backend.resolve("u".into(), YOUTUBE_FORMAT).await.unwrap()["url"], "default");
+        assert_eq!(calls(), 2, "fast client failed: one more call with defaults");
+        std::fs::write(dir.path().join("fast-ok"), "").unwrap();
+        assert_eq!(backend.resolve("u".into(), YOUTUBE_FORMAT).await.unwrap()["url"], "fast");
+        assert_eq!(calls(), 3);
+        backend.ytdlp_args = vec!["--extractor-args".into(), "youtube:player_client=ios".into()];
+        assert_eq!(backend.resolve("u".into(), YOUTUBE_FORMAT).await.unwrap()["url"], "default", "an operator's choice wins");
     }
 }

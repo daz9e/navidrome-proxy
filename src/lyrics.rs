@@ -31,7 +31,7 @@ pub async fn fetch(http: &reqwest::Client, meta: &Json, base_url: &str) -> Optio
         Ok(r) if r.status() == reqwest::StatusCode::OK => r.json().await.ok()?,
         Ok(_) => return None,
         Err(e) => {
-            tracing::debug!("lyrics lookup failed for {}: {e}", as_str(meta.get("title")));
+            tracing::debug!("lyrics lookup failed for {}: {}", as_str(meta.get("title")), crate::util::chain(&e));
             return None;
         }
     };

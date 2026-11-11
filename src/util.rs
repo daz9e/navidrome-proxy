@@ -66,6 +66,17 @@ pub fn path<'a>(v: &'a Value, keys: &[&str]) -> Option<&'a Value> {
     keys.iter().try_fold(v, |cur, k| cur.get(*k))
 }
 
+/// An error with its causes ("error sending request: dns error: ...").
+pub fn chain(e: &dyn std::error::Error) -> String {
+    let mut out = e.to_string();
+    let mut source = e.source();
+    while let Some(cause) = source {
+        out.push_str(&format!(": {cause}"));
+        source = cause.source();
+    }
+    out
+}
+
 /// The last `max_chars` characters of `s` (on a char boundary).
 pub fn tail(s: &str, max_chars: usize) -> String {
     let n = s.chars().count();

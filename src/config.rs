@@ -50,6 +50,8 @@ pub struct Settings {
     pub ytdlp_path: String,
     /// Extra arguments for every yt-dlp call (e.g. `--extractor-args youtube:player_client=...`).
     pub ytdlp_args: Vec<String>,
+    /// YouTube player client tried first when resolving audio ("" disables).
+    pub ytdlp_fast_client: String,
     pub ffmpeg_path: String,
     pub ffprobe_path: String,
     pub fpcalc_path: String,
@@ -91,6 +93,7 @@ impl Default for Settings {
             log_level: "INFO".into(),
             ytdlp_path: "yt-dlp".into(),
             ytdlp_args: Vec::new(),
+            ytdlp_fast_client: "visionos".into(),
             ffmpeg_path: "ffmpeg".into(),
             ffprobe_path: "ffprobe".into(),
             fpcalc_path: "fpcalc".into(),
@@ -165,6 +168,7 @@ impl Settings {
             log_level: s("LOG_LEVEL", &d.log_level).to_uppercase(),
             ytdlp_path: s("YTDLP_PATH", &d.ytdlp_path),
             ytdlp_args: s("YTDLP_ARGS", "").split_whitespace().map(String::from).collect(),
+            ytdlp_fast_client: s("YTDLP_FAST_CLIENT", &d.ytdlp_fast_client).trim().to_string(),
             ffmpeg_path: s("FFMPEG_PATH", &d.ffmpeg_path),
             ffprobe_path: s("FFPROBE_PATH", &d.ffprobe_path),
             fpcalc_path: s("FPCALC_PATH", &d.fpcalc_path),

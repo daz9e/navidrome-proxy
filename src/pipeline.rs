@@ -190,7 +190,9 @@ impl Pipeline {
     }
 
     async fn fetch_into(&self, track: &Track, meta: &Json, cand: &Candidate, cancel: &CancellationToken, staging: &Path) -> Result<Track, SourceError> {
+        let started = std::time::Instant::now();
         let raw = self.fetcher.download(cand, staging, Duration::from_secs(300), cancel).await?;
+        let fetched = started.elapsed().as_secs_f64();
         let (prepared, info) = self.tools.normalize(&raw, staging, "prepared").await.map_err(|e| SourceError::new(e.0, false))?;
         let expected = as_f64(meta.get("duration")).unwrap_or(0.0);
         if expected != 0.0 && (info.duration - expected).abs() > self.settings.duration_tolerance_seconds {
@@ -254,12 +256,13 @@ impl Pipeline {
             });
         }
         tracing::info!(
-            "ready {} <- {} {} ({:.0}s, {})",
+            "ready {} <- {} {} ({:.0}s, {}; fetched in {fetched:.1}s, prepared in {:.1}s)",
             track.id,
             cand.source,
             cand.reference,
             info.duration,
-            dest.file_name().and_then(|n| n.to_str()).unwrap_or("")
+            dest.file_name().and_then(|n| n.to_str()).unwrap_or(""),
+            started.elapsed().as_secs_f64() - fetched
         );
         Ok(fresh)
     }

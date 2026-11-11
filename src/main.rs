@@ -78,7 +78,8 @@ fn configure_logging(level: &str) {
             tracing_subscriber::EnvFilter::try_new(format!("{},hyper=warn,reqwest=warn,lofty=warn", level.to_lowercase()))
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
         });
-    tracing_subscriber::fmt().with_env_filter(filter).with_target(true).with_writer(std::io::stdout).init();
+    let ansi = std::io::IsTerminal::is_terminal(&std::io::stdout());
+    tracing_subscriber::fmt().with_env_filter(filter).with_target(true).with_ansi(ansi).with_writer(std::io::stdout).init();
 }
 
 fn print(result: Value) {

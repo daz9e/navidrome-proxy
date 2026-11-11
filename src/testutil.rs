@@ -345,6 +345,14 @@ impl FakeNavidrome {
         if method == "ping" && get(&q, "u").is_empty() {
             return json_response(nd_ok(json!({})));
         }
+        // Like Navidrome: XML unless the caller asks for JSON.
+        if !matches!(get(&q, "f"), "json" | "jsonp") && !matches!(method.as_str(), "stream" | "download") {
+            let status = if user.is_some() { "ok" } else { "failed" };
+            return Response::builder()
+                .header("Content-Type", "application/xml")
+                .body(axum::body::Body::from(format!(r#"<subsonic-response xmlns="http://subsonic.org/restapi" status="{status}"/>"#)))
+                .unwrap();
+        }
         let Some(user) = user else { return json_response(nd_failed(40, "Wrong username or password")) };
         let id = get(&q, "id").to_string();
         match method.as_str() {

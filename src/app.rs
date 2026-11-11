@@ -78,7 +78,11 @@ pub fn build_services(settings: Settings, o: Overrides) -> anyhow::Result<Arc<Se
     let identity = Identity::new(store.clone());
     let navidrome = Arc::new(Navidrome::new(&settings.navidrome_url, settings.auth_cache_seconds));
     let deezer = Arc::new(Deezer::new(store.clone(), settings.deezer_requests_per_second, &o.deezer_url, settings.search_cache_seconds));
-    let backend = o.backend.unwrap_or_else(|| Arc::new(YtBackend::new(crate::sources::YTMUSIC, &settings.ytdlp_path, settings.ytdlp_args.clone())));
+    let backend = o.backend.unwrap_or_else(|| {
+        let mut yt = YtBackend::new(crate::sources::YTMUSIC, &settings.ytdlp_path, settings.ytdlp_args.clone());
+        yt.fast_client = Some(settings.ytdlp_fast_client.clone()).filter(|c| !c.is_empty());
+        Arc::new(yt)
+    });
     let finder = Arc::new(Sources::new(settings.duration_tolerance_seconds, backend));
     let fetcher: Arc<dyn Fetcher> = o.fetcher.unwrap_or_else(|| finder.clone());
     let library = Arc::new(Library::new(&settings.music_dir, settings.staging_dir()));

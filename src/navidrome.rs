@@ -115,7 +115,7 @@ impl Navidrome {
         repeated: &[(&str, Vec<String>)],
         extra: &[(&str, &str)],
     ) -> Result<Json> {
-        let mut query = params.credentials().with("f", "json");
+        let mut query = params.credentials();
         for (k, v) in extra {
             query = query.with(k, *v);
         }
@@ -126,6 +126,8 @@ impl Navidrome {
     }
 
     async fn get(&self, method: &str, mut query: Params, timeout: Duration) -> Result<Json> {
+        // Navidrome answers XML unless asked otherwise (the auth ping too).
+        query = query.with("f", "json");
         if !query.contains("c") {
             query = query.with("c", "navidrome-proxy");
         }
