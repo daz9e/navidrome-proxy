@@ -3,6 +3,9 @@
 
 pub mod config;
 pub mod db;
+pub mod identity;
 pub mod ids;
+pub mod matching;
 pub mod subsonic;
+pub mod tasks;
 pub mod util;
