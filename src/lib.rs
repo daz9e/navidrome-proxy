@@ -1,6 +1,9 @@
 #![recursion_limit = "256"]
 //! navidrome-proxy: an OpenSubsonic proxy that puts an external catalog inside Navidrome.
 
+pub mod admin;
+pub mod api;
+pub mod app;
 pub mod audio;
 pub mod catalog;
 pub mod config;

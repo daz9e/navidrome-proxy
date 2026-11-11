@@ -168,7 +168,7 @@ impl Intents {
     }
 
     /// The Navidrome album holding any downloaded track of a Deezer album.
-    async fn local_album(&self, deezer_album_id: &str, creds: &Params) -> Result<Option<String>, NdError> {
+    pub async fn local_album(&self, deezer_album_id: &str, creds: &Params) -> Result<Option<String>, NdError> {
         for track in self.store.tracks_in_album(deezer_album_id) {
             let track = self.store.get_track(&self.identity.canonical(&track.id)).unwrap_or(track);
             let Some(local_id) = track.local_id.clone().filter(|_| track.is_ready()) else { continue };
