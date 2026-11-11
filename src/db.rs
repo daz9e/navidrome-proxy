@@ -755,6 +755,11 @@ impl Store {
         );
     }
 
+    /// Forget every recording key (they are rebuilt with `Identity::register`).
+    pub fn clear_recordings(&self) {
+        self.write("DELETE FROM recordings", []);
+    }
+
     pub fn recordings(&self, key: &str) -> Vec<(String, f64)> {
         self.query(
             "SELECT track_id, duration FROM recordings WHERE key = ?",

@@ -56,6 +56,11 @@ enum Command {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Place YouTube/SoundCloud uploads as catalog tracks, <artist>/Unofficial or Custom (then relayout)
+    AdoptUnofficial {
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Match again import lines whose match credits none of the artists
     RecheckImport {
         import_id: String,
@@ -191,6 +196,26 @@ async fn main() {
                     &settings.staging_dir(),
                     dry_run,
                     15.0,
+                )
+                .await,
+            )
+        }
+        Command::AdoptUnofficial { dry_run } => {
+            let dz = deezer::Deezer::new(
+                store.clone(),
+                3.0,
+                deezer::API,
+                settings.search_cache_seconds,
+            );
+            Value::Object(
+                migrate::adopt_unofficial(
+                    &store,
+                    &tools,
+                    &settings.music_dir,
+                    &dz,
+                    &covers(),
+                    &settings.staging_dir(),
+                    dry_run,
                 )
                 .await,
             )

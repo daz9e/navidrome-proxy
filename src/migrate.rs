@@ -20,6 +20,7 @@ use crate::library::{
 };
 use crate::matching;
 use crate::pipeline::cover_for_tags;
+use crate::unofficial::{self, Placement};
 use crate::util::{Json, as_f64, as_str, opt_str, truthy};
 use futures::StreamExt;
 use serde_json::{Value, json};
@@ -631,6 +632,107 @@ pub async fn adopt_youtube_fallbacks(
     stats
 }
 
+/// Place YouTube/SoundCloud tracks downloaded before `unofficial` existed (or while
+/// Deezer was down), and recount every recording key (they now carry version markers).
+///
+/// Tags are rewritten in place, which Navidrome treats as the same song. Run `relayout`
+/// once Navidrome has rescanned to move the files to `<artist>/Unofficial` or
+/// `Custom/Custom` (a retag and a move seen in one scan would give the song a new id).
+pub async fn adopt_unofficial(
+    store: &Arc<Store>,
+    tools: &Tools,
+    music_dir: &Path,
+    deezer: &Deezer,
+    covers: &Covers,
+    work_dir: &Path,
+    dry_run: bool,
+) -> Json {
+    let mut stats = zeroed(&["official", "unofficial", "custom", "failed"]);
+    let identity = Identity::new(store.clone());
+    for track in store.tracks_with_status(&["ready"]) {
+        let upload = track.id.starts_with("yt:") || track.id.starts_with("sc:");
+        let Some(file) = track
+            .file
+            .clone()
+            .filter(|_| upload && !truthy(track.meta.get("album")))
+        else {
+            continue;
+        };
+        let duration = as_f64(track.audio.get("duration"))
+            .filter(|d| *d > 0.0)
+            .or(Some(track.duration()).filter(|d| *d > 0.0));
+        let artist = track.artist();
+        let uploader = match artist.as_str() {
+            "YouTube" | "SoundCloud" => "",
+            a => a,
+        };
+        let placement = match unofficial::place(deezer, &track.title(), uploader, duration).await {
+            Ok(p) => p,
+            Err(e) => {
+                bump(&mut stats, "failed", 1);
+                tracing::warn!("{}: not placed: {e}", track.id);
+                continue;
+            }
+        };
+        let kind = match &placement {
+            Placement::Official(_) => "official",
+            Placement::Unofficial { .. } => "unofficial",
+            Placement::Custom => "custom",
+        };
+        if dry_run {
+            bump(&mut stats, kind, 1);
+            continue;
+        }
+        let mut meta = track.meta.clone();
+        unofficial::apply(&mut meta, &placement);
+        let mut url = as_str(meta.get("cover"));
+        if url.is_empty()
+            && let Some(video) = track.id.strip_prefix("yt:")
+        {
+            url = format!("https://i.ytimg.com/vi/{video}/hqdefault.jpg");
+        }
+        let _ = std::fs::create_dir_all(work_dir);
+        let cover = cover_for_tags(covers, tools, &url, work_dir).await;
+        let (path, tags) = (PathBuf::from(&file), meta.clone());
+        let written = tokio::task::spawn_blocking(move || {
+            let cover = cover.or_else(|| crate::tagging::embedded_cover(&path));
+            crate::tagging::write_tags(&path, &tags, cover.as_deref())
+        })
+        .await;
+        if !matches!(written, Ok(Ok(()))) {
+            bump(&mut stats, "failed", 1);
+            tracing::warn!("cannot tag {file}: {written:?}");
+            continue;
+        }
+        bump(&mut stats, kind, 1);
+        store.remember_track(&track.id, &meta);
+        if let Placement::Official(full) = &placement {
+            identity.link(
+                &ids::track(as_str(full.get("deezer_id"))),
+                &track.id,
+                "official",
+            );
+        }
+        // The Unofficial folder's cover, waiting for `relayout` to move the file there.
+        if let Some(picture) = opt_str(meta.get("album_cover"))
+            && let Some(rel) = relative_path(&track.id, &meta, &suffix_of(Path::new(&file)))
+            && let Some(folder) = rel.parent().map(|f| music_dir.join(f))
+            && !folder.join("cover.jpg").exists()
+            && let Some((data, _)) = covers.get(&picture).await
+        {
+            let _ = std::fs::create_dir_all(&folder);
+            let _ = std::fs::write(folder.join("cover.jpg"), data);
+        }
+    }
+    if !dry_run {
+        store.clear_recordings();
+        for track in store.tracks_with_status(&["ready"]) {
+            identity.register(&track);
+        }
+    }
+    stats
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -955,6 +1057,86 @@ mod tests {
         assert!(
             music
                 .join("TVETH/RAW/1-02 - BURN [deezer-4145181542].m4a")
+                .is_file()
+        );
+    }
+
+    #[tokio::test]
+    async fn adopt_unofficial_places_old_uploads_and_rekeys() {
+        need!("ffmpeg");
+        let fake = FakeDeezer::default(); // TVETH - Hella Quality (deezer:4250555171)
+        let server = serve(fake.router()).await;
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(Store::memory());
+        let deezer = Deezer::new(store.clone(), 100.0, &server.url, 60.0);
+        let covers = Covers::new(&dir.path().join("covers"));
+        let music = dir.path().join("music");
+        let ready = |id: &str, folder: &str, meta: Value| {
+            let path = music
+                .join(folder)
+                .join(format!("x [{}].m4a", id.replace(':', "-")));
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            make(&path, 5, "aac", false);
+            store.remember_track(id, &m(meta));
+            store.update_track(
+                id,
+                &[
+                    Field::status("ready"),
+                    Field::File(Some(path.display().to_string())),
+                ],
+            );
+            path
+        };
+        let slowed = ready(
+            "yt:AAAAAAAAAAA",
+            "slowed vibes/YouTube",
+            json!({"title": "TVETH - Hella Quality (slowed)", "artist": "slowed vibes"}),
+        );
+        let custom = ready(
+            "yt:CCCCCCCCCCC",
+            "zekey/YouTube",
+            json!({"title": "crawling back to you", "artist": "zekey"}),
+        );
+        ready(
+            "yt:DDDDDDDDDDD",
+            "TVETH/YouTube Album",
+            json!({"title": "Has an album", "artist": "TVETH", "album": "Mixtape"}),
+        );
+        store.add_recording("tveth|tveth hella quality", "yt:AAAAAAAAAAA", 5.0); // old key
+        let (tools, work) = (Tools::default(), dir.path().join("work"));
+        let dry = adopt_unofficial(&store, &tools, &music, &deezer, &covers, &work, true).await;
+        assert_eq!(
+            Value::Object(dry),
+            json!({"official": 0, "unofficial": 1, "custom": 1, "failed": 0})
+        );
+        assert!(!crate::tagging::read_tags(&slowed).contains_key("album"));
+        adopt_unofficial(&store, &tools, &music, &deezer, &covers, &work, false).await;
+        let tags = crate::tagging::read_tags(&slowed);
+        assert_eq!(
+            (tags["albumartist"][0].as_str(), tags["album"][0].as_str()),
+            ("TVETH", "Unofficial")
+        );
+        assert_eq!(crate::tagging::read_tags(&custom)["album"], ["Custom"]);
+        // Keys recounted with their version markers.
+        assert!(store.recordings("tveth|tveth hella quality").is_empty());
+        assert_eq!(
+            store.recordings("tveth|tveth hella quality|speed")[0].0,
+            "yt:AAAAAAAAAAA"
+        );
+        // (the album track left untouched by adopt is also put in its usual place)
+        assert_eq!(n(&relayout(&store, &music, false), "moved"), 3);
+        assert_eq!(
+            store.get_track("yt:DDDDDDDDDDD").unwrap().meta["album"],
+            "Mixtape"
+        );
+        assert!(
+            music
+                .join("TVETH/Unofficial/TVETH - Hella Quality (slowed) [yt-AAAAAAAAAAA].m4a")
+                .is_file()
+        );
+        assert!(
+            music
+                .join("Custom/Custom/crawling back to you [yt-CCCCCCCCCCC].m4a")
                 .is_file()
         );
     }

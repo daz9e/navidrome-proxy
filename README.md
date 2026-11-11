@@ -30,6 +30,11 @@ everywhere. Deezer, YouTube and SoundCloud copies of the same recording are merg
 **A clean library.** Files are remuxed (no broken DASH durations), tagged from Deezer
 (all artists of a collaboration), and stored as `Artist/Album/01-03 - Title [deezer-id].m4a`.
 
+**Uploads find their artist.** A YouTube or SoundCloud upload that is not the catalog's own
+recording (slowed, sped up, mashup, edit, leak) goes to `<Artist>/Unofficial`, the artist being
+recognized in the title or uploader whatever the spelling (`фортуна⋆812`, `fortuna812`). Uploads
+of nobody known go to `Custom`. Video thumbnails are cropped square.
+
 **Better copies of liked tracks.** A background job looks on Soulseek and replaces the file
 only if its audio fingerprint matches, so an instrumental never slips in.
 
@@ -132,6 +137,7 @@ navidrome-proxy check-db                  # full integrity check
 navidrome-proxy remux-dash [--dry-run]    # fix DASH-fragmented m4a (safe while serving)
 navidrome-proxy repair-covers [--dry-run]
 navidrome-proxy adopt-youtube-fallbacks [--dry-run]
+navidrome-proxy adopt-unofficial [--dry-run]  # place older uploads, recount recording keys; then relayout
 navidrome-proxy recheck-import <id> [--dry-run]
 ```
 
