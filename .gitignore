@@ -12,3 +12,4 @@ proxy.env
 /var/
 tools/avplayer/.build/
 tools/avplayer/avplayer-check
+target/

@@ -1,0 +1,42 @@
+[package]
+name = "navidrome-proxy"
+version = "3.0.0"
+edition = "2024"
+description = "OpenSubsonic proxy in front of Navidrome that adds an external catalog and downloads what you play or like"
+license = "MIT"
+
+[dependencies]
+anyhow = "1"
+axum = { version = "0.8", features = ["macros"] }
+base64 = "0.22"
+bytes = "1"
+clap = { version = "4", features = ["derive", "env"] }
+futures = "0.3"
+hex = "0.4"
+http-body-util = "0.1"
+libc = "0.2"
+lofty = "0.22"
+md-5 = "0.10"
+parking_lot = "0.12"
+percent-encoding = "2"
+rand = "0.9"
+regex = "1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+rusqlite = { version = "0.37", features = ["bundled", "backup"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+thiserror = "2"
+time = { version = "0.3", features = ["formatting", "parsing", "local-offset", "macros"] }
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+unicode-normalization = "0.1"
+url = "2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+lto = "thin"
+strip = true
