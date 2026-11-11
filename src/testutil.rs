@@ -193,3 +193,303 @@ impl FakeDeezer {
         }
     }
 }
+
+// ------------------------------------------------------------------ Navidrome
+
+pub const USERS: [(&str, &str); 2] = [("alice", "alicepw"), ("bob", "bobpw")];
+
+pub fn md5_token(password: &str, salt: &str) -> String {
+    use md5::{Digest, Md5};
+    format!("t={}&s={salt}", hex::encode(Md5::digest(format!("{password}{salt}"))))
+}
+
+fn nd_identity() -> Json {
+    m(json!({"version": "1.16.1", "type": "navidrome", "serverVersion": "0.63.2 (fake)", "openSubsonic": true}))
+}
+
+pub fn nd_ok(payload: Value) -> Value {
+    let mut root = m(json!({"status": "ok"}));
+    root.extend(nd_identity());
+    root.extend(m(payload));
+    json!({"subsonic-response": root})
+}
+
+pub fn nd_failed(code: i64, message: &str) -> Value {
+    let mut root = m(json!({"status": "failed"}));
+    root.extend(nd_identity());
+    root.insert("error".into(), json!({"code": code, "message": message}));
+    json!({"subsonic-response": root})
+}
+
+pub fn nd_song(id: &str, title: &str, artist: &str, album: &str, album_id: &str) -> Json {
+    m(json!({
+        "id": id, "parent": album_id, "isDir": false, "title": title, "album": album, "artist": artist,
+        "track": 1, "year": 2020, "genre": "", "coverArt": format!("mf-{id}"), "size": 1000,
+        "contentType": "audio/mp4", "suffix": "m4a", "duration": 200, "bitRate": 128,
+        "path": format!("{id}.m4a"), "discNumber": 1, "created": "2026-01-01T00:00:00Z",
+        "albumId": album_id, "artistId": "ar1", "type": "music", "bpm": 0, "comment": "",
+        "sortName": title.to_lowercase(), "mediaType": "song", "musicBrainzId": "", "isrc": [],
+        "genres": [], "replayGain": {}, "channelCount": 2, "samplingRate": 44100, "bitDepth": 16,
+        "moods": [], "artists": [{"id": "ar1", "name": artist}], "displayArtist": artist,
+        "albumArtists": [{"id": "ar1", "name": artist}], "displayAlbumArtist": artist,
+        "contributors": [], "displayComposer": "", "explicitStatus": "", "groupings": [],
+        "works": [], "movements": [],
+    }))
+}
+
+pub type ScanHook = Arc<dyn Fn(&mut NavidromeState) + Send + Sync>;
+
+#[derive(Default)]
+pub struct NavidromeState {
+    pub songs: Vec<Json>,
+    pub stars: BTreeMap<String, std::collections::BTreeSet<String>>,
+    pub playlists: BTreeMap<String, Vec<String>>,
+    pub scrobbles: Vec<(String, String, String)>,
+    pub scans: usize,
+    pub requests: Vec<(String, Vec<(String, String)>)>,
+    pub audio: Vec<u8>,
+    pub on_scan: Option<ScanHook>,
+}
+
+impl NavidromeState {
+    pub fn song(&self, id: &str) -> Option<&Json> {
+        self.songs.iter().find(|s| s["id"] == id)
+    }
+}
+
+/// A tiny Navidrome: real auth, a mutable song list, stars, playlists and scans.
+#[derive(Clone)]
+pub struct FakeNavidrome {
+    pub state: Arc<Mutex<NavidromeState>>,
+}
+
+impl Default for FakeNavidrome {
+    fn default() -> Self {
+        let state = NavidromeState { audio: vec![0u8; 50_000], ..Default::default() };
+        Self { state: Arc::new(Mutex::new(state)) }
+    }
+}
+
+fn get<'a>(q: &'a [(String, String)], key: &str) -> &'a str {
+    q.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str()).unwrap_or("")
+}
+
+fn all<'a>(q: &'a [(String, String)], key: &str) -> Vec<&'a str> {
+    q.iter().filter(|(k, _)| k == key).map(|(_, v)| v.as_str()).collect()
+}
+
+impl FakeNavidrome {
+    pub fn add_song(&self, song: Json) {
+        let mut s = self.state.lock();
+        s.songs.retain(|x| x["id"] != song["id"]);
+        s.songs.push(song);
+    }
+
+    pub fn count(&self, method: &str) -> usize {
+        self.state.lock().requests.iter().filter(|(m, _)| m == method).count()
+    }
+
+    pub fn requests(&self, method: &str) -> Vec<Vec<(String, String)>> {
+        self.state.lock().requests.iter().filter(|(m, _)| m == method).map(|(_, q)| q.clone()).collect()
+    }
+
+    pub fn router(&self) -> Router {
+        Router::new()
+            .route("/rest/{method}", axum::routing::any(Self::handle))
+            .fallback(|req: Request| async move {
+                let headers = req.headers();
+                let host = headers.get("host").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+                let enc = headers.get("accept-encoding").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+                Response::builder()
+                    .header("X-Seen-Host", host)
+                    .header("X-Seen-Encoding", enc)
+                    .body(axum::body::Body::from(format!("navidrome ui {}", req.uri().path())))
+                    .unwrap()
+            })
+            .with_state(self.clone())
+    }
+
+    fn auth(q: &[(String, String)]) -> Option<String> {
+        let user = get(q, "u");
+        let pw = USERS.iter().find(|(u, _)| *u == user)?.1;
+        let p = get(q, "p");
+        if !p.is_empty() {
+            let given = match p.strip_prefix("enc:") {
+                Some(h) => String::from_utf8(hex::decode(h).ok()?).ok()?,
+                None => p.to_string(),
+            };
+            return (given == pw).then(|| user.to_string());
+        }
+        let (t, s) = (get(q, "t"), get(q, "s"));
+        if !t.is_empty() && !s.is_empty() {
+            return (md5_token(pw, s) == format!("t={t}&s={s}")).then(|| user.to_string());
+        }
+        None
+    }
+
+    async fn handle(
+        State(fake): State<FakeNavidrome>,
+        axum::extract::Path(method): axum::extract::Path<String>,
+        req: Request,
+    ) -> Response {
+        let method = method.trim_end_matches(".view").to_string();
+        let mut q = query_pairs(&req);
+        let range = req.headers().get("range").and_then(|v| v.to_str().ok()).map(String::from);
+        if req.method() == axum::http::Method::POST {
+            let body = axum::body::to_bytes(req.into_body(), 1 << 20).await.unwrap_or_default();
+            q.extend(url::form_urlencoded::parse(&body).into_owned());
+        }
+        let mut s = fake.state.lock();
+        s.requests.push((method.clone(), q.clone()));
+        let user = Self::auth(&q);
+        if method == "ping" && get(&q, "u").is_empty() {
+            return json_response(nd_ok(json!({})));
+        }
+        let Some(user) = user else { return json_response(nd_failed(40, "Wrong username or password")) };
+        let id = get(&q, "id").to_string();
+        match method.as_str() {
+            "ping" => json_response(nd_ok(json!({}))),
+            "search2" | "search3" => {
+                let query = get(&q, "query").trim_matches('"').to_lowercase();
+                let count: usize = get(&q, "songCount").parse().unwrap_or(20);
+                let offset: usize = get(&q, "songOffset").parse().unwrap_or(0);
+                let found: Vec<Value> = s
+                    .songs
+                    .iter()
+                    .filter(|x| {
+                        let hay = format!("{} {} {}", x["title"].as_str().unwrap_or(""), x["artist"].as_str().unwrap_or(""), x["album"].as_str().unwrap_or("")).to_lowercase();
+                        query.split_whitespace().all(|w| hay.contains(w))
+                    })
+                    .skip(offset)
+                    .take(count)
+                    .map(|x| Value::Object(x.clone()))
+                    .collect();
+                let key = if method == "search3" { "searchResult3" } else { "searchResult2" };
+                let inner = if count > 0 { json!({"song": found}) } else { json!({}) };
+                json_response(nd_ok(json!({ key: inner })))
+            }
+            "getSong" => match s.song(&id) {
+                Some(song) => json_response(nd_ok(json!({"song": song}))),
+                None => json_response(nd_failed(70, "Song not found")),
+            },
+            "getStarred" | "getStarred2" => {
+                let key = if method == "getStarred2" { "starred2" } else { "starred" };
+                let songs: Vec<Value> = s
+                    .stars
+                    .get(&user)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|i| s.song(i))
+                    .map(|x| {
+                        let mut x = x.clone();
+                        x.insert("starred".into(), json!("2026-01-01T00:00:00Z"));
+                        Value::Object(x)
+                    })
+                    .collect();
+                let inner = if songs.is_empty() { json!({}) } else { json!({"song": songs}) };
+                json_response(nd_ok(json!({ key: inner })))
+            }
+            "star" | "unstar" => {
+                let ids = all(&q, "id");
+                if ids.iter().any(|i| s.song(i).is_none()) {
+                    return json_response(nd_failed(70, "Song not found"));
+                }
+                let target = s.stars.entry(user).or_default();
+                for i in ids {
+                    if method == "star" {
+                        target.insert(i.to_string());
+                    } else {
+                        target.remove(i);
+                    }
+                }
+                json_response(nd_ok(json!({})))
+            }
+            "scrobble" => {
+                let ids: Vec<String> = all(&q, "id").into_iter().map(String::from).collect();
+                if ids.iter().any(|i| s.song(i).is_none()) {
+                    return json_response(nd_failed(70, "not found"));
+                }
+                let submission = match get(&q, "submission") {
+                    "" => "true".to_string(),
+                    v => v.to_string(),
+                };
+                for i in ids {
+                    s.scrobbles.push((user.clone(), i, submission.clone()));
+                }
+                json_response(nd_ok(json!({})))
+            }
+            "startScan" => {
+                s.scans += 1;
+                if let Some(hook) = s.on_scan.clone() {
+                    hook(&mut s);
+                }
+                let n = s.songs.len();
+                json_response(nd_ok(json!({"scanStatus": {"scanning": true, "count": n}})))
+            }
+            "updatePlaylist" => {
+                let ids: Vec<String> = all(&q, "songIdToAdd").into_iter().map(String::from).collect();
+                if ids.iter().any(|i| s.song(i).is_none()) {
+                    return json_response(nd_failed(70, "not found"));
+                }
+                s.playlists.entry(get(&q, "playlistId").to_string()).or_default().extend(ids);
+                json_response(nd_ok(json!({})))
+            }
+            "getAlbum" => {
+                let songs: Vec<Value> = s.songs.iter().filter(|x| x["albumId"] == id).map(|x| Value::Object(x.clone())).collect();
+                if songs.is_empty() {
+                    return json_response(nd_failed(70, "Album not found"));
+                }
+                let album = json!({
+                    "id": id, "name": songs[0]["album"], "artist": songs[0]["artist"], "artistId": "ar1",
+                    "coverArt": format!("al-{id}"), "songCount": songs.len(), "duration": 0, "song": songs,
+                });
+                json_response(nd_ok(json!({"album": album})))
+            }
+            "getTopSongs" => json_response(nd_ok(json!({"topSongs": {}}))),
+            "createPlaylist" => {
+                let pid = match get(&q, "playlistId") {
+                    "" => format!("pl{}", s.playlists.len() + 1),
+                    p => p.to_string(),
+                };
+                let songs: Vec<String> = all(&q, "songId").into_iter().map(String::from).collect();
+                s.playlists.insert(pid.clone(), songs);
+                json_response(nd_ok(json!({"playlist": {"id": pid, "name": get(&q, "name"), "entry": []}})))
+            }
+            "getPlaylist" => match s.playlists.get(&id) {
+                None => json_response(nd_failed(70, "not found")),
+                Some(pl) => {
+                    let entries: Vec<Value> = pl.iter().filter_map(|i| s.song(i)).map(|x| Value::Object(x.clone())).collect();
+                    json_response(nd_ok(json!({"playlist": {"id": id, "name": "p", "songCount": entries.len(), "duration": 0, "entry": entries}})))
+                }
+            },
+            "stream" | "download" => {
+                if s.song(&id).is_none() {
+                    return json_response(nd_failed(70, "not found"));
+                }
+                let data = s.audio.clone();
+                if let Some(rng) = range {
+                    let spec = rng.trim_start_matches("bytes=");
+                    let (a, b) = spec.split_once('-').unwrap_or((spec, ""));
+                    let start: usize = a.parse().unwrap_or(0);
+                    let end: usize = b.parse().unwrap_or(data.len() - 1);
+                    return Response::builder()
+                        .status(206)
+                        .header("Content-Type", "audio/mp4")
+                        .header("Content-Range", format!("bytes {start}-{end}/{}", data.len()))
+                        .header("Accept-Ranges", "bytes")
+                        .body(axum::body::Body::from(data[start..=end].to_vec()))
+                        .unwrap();
+                }
+                Response::builder()
+                    .header("Content-Type", "audio/mp4")
+                    .header("Accept-Ranges", "bytes")
+                    .body(axum::body::Body::from(data))
+                    .unwrap()
+            }
+            _ => {
+                let params: Json = q.iter().map(|(k, v)| (k.clone(), json!(v))).collect();
+                json_response(nd_ok(json!({"echo": {"method": method, "params": Value::Object(params).to_string()}})))
+            }
+        }
+    }
+}
