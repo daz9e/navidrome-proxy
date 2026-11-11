@@ -746,8 +746,10 @@ impl Store {
         self.write("UPDATE jobs SET state = 'queued', not_before = 0 WHERE state = 'running'", [])
     }
 
+    /// The earliest *future* retry. Jobs already due are not counted: a lane that
+    /// cannot claim them (they belong to the other lane) must not busy-poll.
     pub fn next_retry_time(&self) -> Option<f64> {
-        self.query("SELECT MIN(not_before) FROM jobs WHERE state = 'queued'", [], |r| r.get::<_, Option<f64>>(0))
+        self.query("SELECT MIN(not_before) FROM jobs WHERE state = 'queued' AND not_before > ?", [now()], |r| r.get::<_, Option<f64>>(0))
             .into_iter()
             .next()
             .flatten()

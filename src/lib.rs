@@ -13,6 +13,7 @@ pub mod lyrics;
 pub mod matching;
 pub mod navidrome;
 pub mod process;
+pub mod scheduler;
 pub mod sources;
 pub mod subsonic;
 pub mod tagging;
