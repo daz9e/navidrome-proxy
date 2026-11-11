@@ -2,6 +2,7 @@
 //! navidrome-proxy: an OpenSubsonic proxy that puts an external catalog inside Navidrome.
 
 pub mod audio;
+pub mod catalog;
 pub mod config;
 pub mod covers;
 pub mod db;
@@ -9,6 +10,7 @@ pub mod deezer;
 pub mod identity;
 pub mod ids;
 pub mod library;
+pub mod intents;
 pub mod lyrics;
 pub mod matching;
 pub mod navidrome;

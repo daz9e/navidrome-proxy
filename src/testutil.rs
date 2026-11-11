@@ -365,7 +365,19 @@ impl FakeNavidrome {
                     .map(|x| Value::Object(x.clone()))
                     .collect();
                 let key = if method == "search3" { "searchResult3" } else { "searchResult2" };
-                let inner = if count > 0 { json!({"song": found}) } else { json!({}) };
+                let mut inner = if count > 0 { json!({"song": found}) } else { json!({}) };
+                if get(&q, "artistCount").parse().unwrap_or(20) > 0 {
+                    let mut artists: Vec<Value> = vec![];
+                    for x in &s.songs {
+                        let a = json!({"id": x["artistId"], "name": x["artist"]});
+                        if x["artist"].as_str().unwrap_or("").to_lowercase().contains(&query) && !artists.contains(&a) {
+                            artists.push(a);
+                        }
+                    }
+                    if !artists.is_empty() {
+                        inner["artist"] = json!(artists);
+                    }
+                }
                 json_response(nd_ok(json!({ key: inner })))
             }
             "getSong" => match s.song(&id) {
