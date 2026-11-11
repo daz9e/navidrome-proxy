@@ -119,7 +119,8 @@ impl Settings {
 
     pub fn from_env(e: &HashMap<String, String>) -> Self {
         let d = Self::default();
-        let s = |key: &str, default: &str| e.get(key).cloned().unwrap_or_else(|| default.to_string());
+        let s =
+            |key: &str, default: &str| e.get(key).cloned().unwrap_or_else(|| default.to_string());
         // `<NAME>_FILE` holds a secret on disk (systemd credentials, agenix, sops).
         let secret = |key: &str| {
             e.get(&format!("{key}_FILE"))
@@ -131,7 +132,9 @@ impl Settings {
         Self {
             host: s("HOST", &d.host),
             port: parse_num(e.get("PORT"), d.port),
-            navidrome_url: s("NAVIDROME_URL", &d.navidrome_url).trim_end_matches('/').to_string(),
+            navidrome_url: s("NAVIDROME_URL", &d.navidrome_url)
+                .trim_end_matches('/')
+                .to_string(),
             navidrome_user: s("NAVIDROME_USER", ""),
             navidrome_password: secret("NAVIDROME_PASSWORD"),
             music_dir: s("MUSIC_DIR", "/music").into(),
@@ -144,12 +147,18 @@ impl Settings {
             stream_wait_seconds: parse_num(e.get("STREAM_WAIT_SECONDS"), d.stream_wait_seconds),
             auth_cache_seconds: parse_num(e.get("AUTH_CACHE_SECONDS"), d.auth_cache_seconds),
             search_cache_seconds: parse_num(e.get("SEARCH_CACHE_SECONDS"), d.search_cache_seconds),
-            search_budget_seconds: parse_num(e.get("SEARCH_BUDGET_SECONDS"), d.search_budget_seconds),
+            search_budget_seconds: parse_num(
+                e.get("SEARCH_BUDGET_SECONDS"),
+                d.search_budget_seconds,
+            ),
             deezer_requests_per_second: parse_num(
                 e.get("DEEZER_REQUESTS_PER_SECOND"),
                 d.deezer_requests_per_second,
             ),
-            scan_debounce_seconds: parse_num(e.get("SCAN_DEBOUNCE_SECONDS"), d.scan_debounce_seconds),
+            scan_debounce_seconds: parse_num(
+                e.get("SCAN_DEBOUNCE_SECONDS"),
+                d.scan_debounce_seconds,
+            ),
             duration_tolerance_seconds: parse_num(
                 e.get("DURATION_TOLERANCE_SECONDS"),
                 d.duration_tolerance_seconds,
@@ -158,7 +167,10 @@ impl Settings {
             external_albums: parse_num(e.get("EXTERNAL_ALBUMS"), d.external_albums),
             external_artists: parse_num(e.get("EXTERNAL_ARTISTS"), d.external_artists),
             youtube_songs: parse_num(e.get("YOUTUBE_SONGS"), d.youtube_songs),
-            complete_local_albums: parse_bool(e.get("COMPLETE_LOCAL_ALBUMS"), d.complete_local_albums),
+            complete_local_albums: parse_bool(
+                e.get("COMPLETE_LOCAL_ALBUMS"),
+                d.complete_local_albums,
+            ),
             prefetch_next_tracks: parse_num(e.get("PREFETCH_NEXT_TRACKS"), d.prefetch_next_tracks),
             slskd_upgrades: parse_bool(e.get("SLSKD_UPGRADES"), d.slskd_upgrades),
             slskd_min_peers: parse_num(e.get("SLSKD_MIN_PEERS"), d.slskd_min_peers).max(1),
@@ -167,8 +179,13 @@ impl Settings {
             backup_keep: parse_num(e.get("BACKUP_KEEP"), d.backup_keep).max(1),
             log_level: s("LOG_LEVEL", &d.log_level).to_uppercase(),
             ytdlp_path: s("YTDLP_PATH", &d.ytdlp_path),
-            ytdlp_args: s("YTDLP_ARGS", "").split_whitespace().map(String::from).collect(),
-            ytdlp_fast_client: s("YTDLP_FAST_CLIENT", &d.ytdlp_fast_client).trim().to_string(),
+            ytdlp_args: s("YTDLP_ARGS", "")
+                .split_whitespace()
+                .map(String::from)
+                .collect(),
+            ytdlp_fast_client: s("YTDLP_FAST_CLIENT", &d.ytdlp_fast_client)
+                .trim()
+                .to_string(),
             ffmpeg_path: s("FFMPEG_PATH", &d.ffmpeg_path),
             ffprobe_path: s("FFPROBE_PATH", &d.ffprobe_path),
             fpcalc_path: s("FPCALC_PATH", &d.fpcalc_path),
@@ -203,7 +220,10 @@ mod tests {
     use super::*;
 
     fn env(pairs: &[(&str, &str)]) -> HashMap<String, String> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     #[test]
@@ -212,7 +232,10 @@ mod tests {
         assert_eq!(s.port, 8084);
         assert_eq!(s.navidrome_url, "http://127.0.0.1:4533");
         assert_eq!(s.db_path(), PathBuf::from("/data/proxy.sqlite3"));
-        assert_eq!(s.staging_dir(), PathBuf::from("/music/.navidrome-proxy-staging"));
+        assert_eq!(
+            s.staging_dir(),
+            PathBuf::from("/music/.navidrome-proxy-staging")
+        );
         assert!(!s.slskd_enabled());
     }
 

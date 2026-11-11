@@ -28,7 +28,12 @@ fn decode_enc(key: &str, value: String) -> String {
 
 impl Params {
     pub fn new<K: Into<String>, V: Into<String>>(items: impl IntoIterator<Item = (K, V)>) -> Self {
-        Self(items.into_iter().map(|(k, v)| (k.into(), v.into())).collect())
+        Self(
+            items
+                .into_iter()
+                .map(|(k, v)| (k.into(), v.into()))
+                .collect(),
+        )
     }
 
     pub fn parse(query: &str, body: &str) -> Self {
@@ -42,15 +47,27 @@ impl Params {
     }
 
     pub fn get(&self, key: &str) -> &str {
-        self.0.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str()).unwrap_or("")
+        self.0
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
+            .unwrap_or("")
     }
 
     pub fn get_or<'a>(&'a self, key: &str, default: &'a str) -> &'a str {
-        self.0.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str()).unwrap_or(default)
+        self.0
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
+            .unwrap_or(default)
     }
 
     pub fn getall(&self, key: &str) -> Vec<String> {
-        self.0.iter().filter(|(k, _)| k == key).map(|(_, v)| v.clone()).collect()
+        self.0
+            .iter()
+            .filter(|(k, _)| k == key)
+            .map(|(_, v)| v.clone())
+            .collect()
     }
 
     pub fn int(&self, key: &str, default: i64) -> i64 {
@@ -70,7 +87,10 @@ impl Params {
 
     /// A copy where every `key` is replaced by `values` (possibly none), at the first position.
     pub fn replace<S: Into<String>>(&self, key: &str, values: impl IntoIterator<Item = S>) -> Self {
-        let values: Vec<(String, String)> = values.into_iter().map(|v| (key.to_string(), v.into())).collect();
+        let values: Vec<(String, String)> = values
+            .into_iter()
+            .map(|v| (key.to_string(), v.into()))
+            .collect();
         let mut out = Vec::with_capacity(self.0.len() + values.len());
         let mut pending = Some(values);
         for (k, v) in &self.0 {
@@ -89,7 +109,13 @@ impl Params {
     }
 
     pub fn without(&self, keys: &[&str]) -> Self {
-        Self(self.0.iter().filter(|(k, _)| !keys.contains(&k.as_str())).cloned().collect())
+        Self(
+            self.0
+                .iter()
+                .filter(|(k, _)| !keys.contains(&k.as_str()))
+                .cloned()
+                .collect(),
+        )
     }
 
     pub fn with(&self, key: &str, value: impl Into<String>) -> Self {
@@ -108,7 +134,9 @@ impl Params {
     }
 
     pub fn encode(&self) -> String {
-        url::form_urlencoded::Serializer::new(String::new()).extend_pairs(&self.0).finish()
+        url::form_urlencoded::Serializer::new(String::new())
+            .extend_pairs(&self.0)
+            .finish()
     }
 
     /// First value of every key (what response rendering needs: `f`, `callback`).
@@ -126,7 +154,8 @@ impl Params {
 
     pub fn has_credentials(&self) -> bool {
         (!self.get("u").is_empty()
-            && (!self.get("p").is_empty() || (!self.get("t").is_empty() && !self.get("s").is_empty())))
+            && (!self.get("p").is_empty()
+                || (!self.get("t").is_empty() && !self.get("s").is_empty())))
             || !self.get("apiKey").is_empty()
     }
 }
@@ -146,9 +175,17 @@ pub fn redact(text: &str) -> String {
         return String::new();
     }
     let prefixed = text.starts_with(['?', '&']);
-    let input = if prefixed { text.to_string() } else { format!("&{text}") };
+    let input = if prefixed {
+        text.to_string()
+    } else {
+        format!("&{text}")
+    };
     let cleaned = REDACT.replace_all(&input, "${1}***").into_owned();
-    if prefixed { cleaned } else { cleaned[1..].to_string() }
+    if prefixed {
+        cleaned
+    } else {
+        cleaned[1..].to_string()
+    }
 }
 
 #[cfg(test)]
@@ -166,7 +203,10 @@ mod tests {
     #[test]
     fn replace_keeps_position_and_can_drop() {
         let p = Params::parse("u=a&id=deezer:1&id=L2&f=json", "");
-        assert_eq!(p.replace("id", ["L1", "L2"]).encode(), "u=a&id=L1&id=L2&f=json");
+        assert_eq!(
+            p.replace("id", ["L1", "L2"]).encode(),
+            "u=a&id=L1&id=L2&f=json"
+        );
         assert_eq!(p.replace("id", Vec::<String>::new()).encode(), "u=a&f=json");
         assert_eq!(p.replace("albumId", ["X"]).getall("albumId"), ["X"]);
     }
@@ -195,7 +235,10 @@ mod tests {
             redact("u=alice&p=hunter2&t=abc&s=salt&apiKey=k"),
             "u=alice&p=***&t=***&s=***&apiKey=***"
         );
-        assert_eq!(redact("/rest/ping.view?p=secret&u=x"), "/rest/ping.view?p=***&u=x");
+        assert_eq!(
+            redact("/rest/ping.view?p=secret&u=x"),
+            "/rest/ping.view?p=***&u=x"
+        );
         assert!(!format!("{:?}", Params::parse("u=a&p=secret", "")).contains("secret"));
     }
 

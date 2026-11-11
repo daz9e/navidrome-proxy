@@ -13,7 +13,9 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-pub const AUDIO_SUFFIXES: [&str; 11] = ["m4a", "mp4", "mp3", "opus", "ogg", "oga", "webm", "flac", "wav", "aac", "mka"];
+pub const AUDIO_SUFFIXES: [&str; 11] = [
+    "m4a", "mp4", "mp3", "opus", "ogg", "oga", "webm", "flac", "wav", "aac", "mka",
+];
 
 /// Shorter than this is a preview or a broken file, not a song.
 pub const MIN_SECONDS: f64 = 5.0;
@@ -56,12 +58,19 @@ pub struct Tools {
 
 impl Default for Tools {
     fn default() -> Self {
-        Self { ffmpeg: "ffmpeg".into(), ffprobe: "ffprobe".into(), fpcalc: "fpcalc".into() }
+        Self {
+            ffmpeg: "ffmpeg".into(),
+            ffprobe: "ffprobe".into(),
+            fpcalc: "fpcalc".into(),
+        }
     }
 }
 
 pub fn suffix_of(path: &Path) -> String {
-    path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase()
+    path.extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase()
 }
 
 /// Container the library stores a codec in; everything exotic becomes AAC/m4a.
@@ -81,22 +90,44 @@ impl Tools {
     pub async fn probe(&self, path: &Path) -> Result<AudioInfo, AudioError> {
         let out = process::run(
             &self.ffprobe,
-            &args(["-v", "error", "-print_format", "json", "-show_format", "-show_streams", "-select_streams", "a:0"])
-                .into_iter()
-                .chain([path.display().to_string()])
-                .collect::<Vec<_>>(),
+            &args([
+                "-v",
+                "error",
+                "-print_format",
+                "json",
+                "-show_format",
+                "-show_streams",
+                "-select_streams",
+                "a:0",
+            ])
+            .into_iter()
+            .chain([path.display().to_string()])
+            .collect::<Vec<_>>(),
             Duration::from_secs(60),
             None,
         )
         .await
         .map_err(run_error)?;
         if !out.success() {
-            return Err(AudioError(format!("ffprobe failed: {}", tail_text(&out.stderr))));
+            return Err(AudioError(format!(
+                "ffprobe failed: {}",
+                tail_text(&out.stderr)
+            )));
         }
         let data: Value = serde_json::from_slice(&out.stdout).unwrap_or(Value::Null);
-        let stream = data.get("streams").and_then(Value::as_array).and_then(|s| s.first()).cloned().ok_or_else(|| AudioError("no audio stream".into()))?;
+        let stream = data
+            .get("streams")
+            .and_then(Value::as_array)
+            .and_then(|s| s.first())
+            .cloned()
+            .ok_or_else(|| AudioError("no audio stream".into()))?;
         let fmt = data.get("format").cloned().unwrap_or(Value::Null);
-        let pick = |k: &str| stream.get(k).filter(|v| crate::util::truthy(Some(v))).or_else(|| fmt.get(k));
+        let pick = |k: &str| {
+            stream
+                .get(k)
+                .filter(|v| crate::util::truthy(Some(v)))
+                .or_else(|| fmt.get(k))
+        };
         Ok(AudioInfo {
             duration: as_f64(pick("duration")).unwrap_or(0.0),
             codec: as_str(stream.get("codec_name")),
@@ -117,24 +148,54 @@ impl Tools {
     ///   reliably playable by AVFoundation over HTTP)
     ///
     /// Metadata is always dropped; canonical tags are written afterwards.
-    pub async fn normalize(&self, src: &Path, dest_dir: &Path, stem: &str) -> Result<(PathBuf, AudioInfo), AudioError> {
+    pub async fn normalize(
+        &self,
+        src: &Path,
+        dest_dir: &Path,
+        stem: &str,
+    ) -> Result<(PathBuf, AudioInfo), AudioError> {
         let info = self.probe(src).await?;
         if info.duration < MIN_SECONDS {
-            return Err(AudioError(format!("audio too short ({:.1}s)", info.duration)));
+            return Err(AudioError(format!(
+                "audio too short ({:.1}s)",
+                info.duration
+            )));
         }
         let dest = dest_dir.join(format!("{stem}.{}", target_suffix(&info.codec)));
         let mut a = args(["-nostdin", "-v", "error", "-y", "-i"]);
         a.push(src.display().to_string());
-        a.extend(args(["-map", "0:a:0", "-map_metadata", "-1", "-vn", "-sn", "-dn"]));
+        a.extend(args([
+            "-map",
+            "0:a:0",
+            "-map_metadata",
+            "-1",
+            "-vn",
+            "-sn",
+            "-dn",
+        ]));
         a.extend(args(match info.codec.as_str() {
             "aac" => vec!["-c:a", "copy", "-movflags", "+faststart", "-f", "mp4"],
             "mp3" => vec!["-c:a", "copy", "-id3v2_version", "3", "-f", "mp3"],
-            _ => vec!["-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-f", "mp4"],
+            _ => vec![
+                "-c:a",
+                "aac",
+                "-b:a",
+                "192k",
+                "-movflags",
+                "+faststart",
+                "-f",
+                "mp4",
+            ],
         }));
         a.push(dest.display().to_string());
-        let out = process::run(&self.ffmpeg, &a, Duration::from_secs(600), None).await.map_err(run_error)?;
+        let out = process::run(&self.ffmpeg, &a, Duration::from_secs(600), None)
+            .await
+            .map_err(run_error)?;
         if !out.success() || !dest.is_file() {
-            return Err(AudioError(format!("ffmpeg failed: {}", tail_text(&out.stderr))));
+            return Err(AudioError(format!(
+                "ffmpeg failed: {}",
+                tail_text(&out.stderr)
+            )));
         }
         let result = self.probe(&dest).await?;
         if info.duration > 0.0 && (result.duration - info.duration).abs() > 2.0 {
@@ -158,18 +219,39 @@ impl Tools {
         let tmp = path.with_file_name(format!(".{stem}.remux.{}", suffix_of(path)));
         let mut a = args(["-nostdin", "-v", "error", "-y", "-i"]);
         a.push(path.display().to_string());
-        a.extend(args(["-map", "0", "-map_metadata", "0", "-c", "copy", "-movflags", "+faststart", "-f", "mp4"]));
+        a.extend(args([
+            "-map",
+            "0",
+            "-map_metadata",
+            "0",
+            "-c",
+            "copy",
+            "-movflags",
+            "+faststart",
+            "-f",
+            "mp4",
+        ]));
         a.push(tmp.display().to_string());
-        let out = process::run(&self.ffmpeg, &a, Duration::from_secs(600), None).await.map_err(run_error)?;
+        let out = process::run(&self.ffmpeg, &a, Duration::from_secs(600), None)
+            .await
+            .map_err(run_error)?;
         if !out.success() || !tmp.is_file() {
             let _ = std::fs::remove_file(&tmp);
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            return Err(AudioError(format!("remux failed for {name}: {}", tail_text(&out.stderr))));
+            return Err(AudioError(format!(
+                "remux failed for {name}: {}",
+                tail_text(&out.stderr)
+            )));
         }
         let fixed = self.probe(&tmp).await?;
         if (fixed.duration - info.duration).abs() > 2.0 && fixed.duration > 0.0 {
             // The DASH header lies about duration; the rewritten file is the truth.
-            tracing::info!("remux {}: header duration {:.1}s -> real {:.1}s", path.display(), info.duration, fixed.duration);
+            tracing::info!(
+                "remux {}: header duration {:.1}s -> real {:.1}s",
+                path.display(),
+                info.duration,
+                fixed.duration
+            );
         }
         std::fs::rename(&tmp, path).map_err(|e| AudioError(e.to_string()))?;
         Ok(true)
@@ -184,7 +266,9 @@ impl Tools {
         a.push(src.display().to_string());
         a.extend(args(["-frames:v", "1", "-q:v", "2"]));
         a.push(dest.display().to_string());
-        let out = process::run(&self.ffmpeg, &a, Duration::from_secs(60), None).await.ok()?;
+        let out = process::run(&self.ffmpeg, &a, Duration::from_secs(60), None)
+            .await
+            .ok()?;
         let data = out.success().then(|| std::fs::read(&dest).ok()).flatten();
         let _ = std::fs::remove_file(&src);
         let _ = std::fs::remove_file(&dest);
@@ -196,18 +280,30 @@ impl Tools {
         let mut a = args(["-raw", "-json", "-length"]);
         a.push(length.to_string());
         a.push(path.display().to_string());
-        let out = process::run(&self.fpcalc, &a, Duration::from_secs(120), None).await.ok()?;
+        let out = process::run(&self.fpcalc, &a, Duration::from_secs(120), None)
+            .await
+            .ok()?;
         if !out.success() {
             return None;
         }
         let v: Value = serde_json::from_slice(&out.stdout).ok()?;
-        v.get("fingerprint")?.as_array()?.iter().map(|x| x.as_i64().map(|n| n as u32)).collect()
+        v.get("fingerprint")?
+            .as_array()?
+            .iter()
+            .map(|x| x.as_i64().map(|n| n as u32))
+            .collect()
     }
 
     pub async fn available(&self) -> Vec<(&'static str, bool)> {
         let mut out = Vec::new();
-        for (name, tool) in [("ffmpeg", &self.ffmpeg), ("ffprobe", &self.ffprobe), ("fpcalc", &self.fpcalc)] {
-            let ok = process::run(tool, &args(["-version"]), Duration::from_secs(10), None).await.is_ok();
+        for (name, tool) in [
+            ("ffmpeg", &self.ffmpeg),
+            ("ffprobe", &self.ffprobe),
+            ("fpcalc", &self.fpcalc),
+        ] {
+            let ok = process::run(tool, &args(["-version"]), Duration::from_secs(10), None)
+                .await
+                .is_ok();
             out.push((name, ok));
         }
         out
@@ -242,7 +338,10 @@ pub mod tests {
 
     /// Whether the real tools are on PATH (inside `nix develop` / the Nix build they are).
     pub fn have(tool: &str) -> bool {
-        std::process::Command::new(tool).arg("-version").output().is_ok()
+        std::process::Command::new(tool)
+            .arg("-version")
+            .output()
+            .is_ok()
     }
 
     /// A synthetic tone file made with ffmpeg (no copyrighted material in the repo).
@@ -253,21 +352,47 @@ pub mod tests {
             "aac" => {
                 a.extend(args(["-c:a", "aac", "-b:a", "128k"]));
                 if dash {
-                    a.extend(args(["-movflags", "frag_keyframe+empty_moov+default_base_moof", "-brand", "dash", "-f", "mp4"]));
+                    a.extend(args([
+                        "-movflags",
+                        "frag_keyframe+empty_moov+default_base_moof",
+                        "-brand",
+                        "dash",
+                        "-f",
+                        "mp4",
+                    ]));
                 }
             }
-            "mp3" => a.extend(args(["-c:a", "libmp3lame", "-b:a", "192k", "-metadata", "title=junk", "-metadata", "comment=youtube"])),
+            "mp3" => a.extend(args([
+                "-c:a",
+                "libmp3lame",
+                "-b:a",
+                "192k",
+                "-metadata",
+                "title=junk",
+                "-metadata",
+                "comment=youtube",
+            ])),
             "opus" => a.extend(args(["-c:a", "libopus", "-b:a", "96k", "-f", "webm"])),
             _ => unreachable!(),
         }
         a.push(path.display().to_string());
-        assert!(std::process::Command::new("ffmpeg").args(&a).status().unwrap().success());
+        assert!(
+            std::process::Command::new("ffmpeg")
+                .args(&a)
+                .status()
+                .unwrap()
+                .success()
+        );
         path.to_path_buf()
     }
 
     /// A melody-like signal with changing notes, so fingerprints carry information.
     pub fn make_music(path: &Path, seconds: u32, variant: u32) -> PathBuf {
-        let notes: [u32; 8] = if variant == 0 { [220, 262, 294, 330, 349, 392, 440, 494] } else { [247, 311, 370, 415, 466, 523, 587, 622] };
+        let notes: [u32; 8] = if variant == 0 {
+            [220, 262, 294, 330, 349, 392, 440, 494]
+        } else {
+            [247, 311, 370, 415, 466, 523, 587, 622]
+        };
         let expr: Vec<String> = notes
             .iter()
             .enumerate()
@@ -304,7 +429,10 @@ pub mod tests {
         assert!((info.duration - 30.0).abs() < 0.5);
         let data = std::fs::read(&out).unwrap();
         let find = |n: &[u8]| data.windows(4).position(|w| w == n).unwrap();
-        assert!(find(b"moov") < find(b"mdat"), "index before payload (faststart)");
+        assert!(
+            find(b"moov") < find(b"mdat"),
+            "index before payload (faststart)"
+        );
     }
 
     #[tokio::test]
@@ -313,12 +441,15 @@ pub mod tests {
         let dir = tempfile::tempdir().unwrap();
         let tools = Tools::default();
         let opus = make(&dir.path().join("source.webm"), 25, "opus", false);
-        let (out, info) = tools.normalize(&opus, &dir.path().join("."), "a").await.unwrap();
+        let (out, info) = tools
+            .normalize(&opus, &dir.path().join("."), "a")
+            .await
+            .unwrap();
         assert!(suffix_of(&out) == "m4a" && info.codec == "aac");
         let mp3 = make(&dir.path().join("source.mp3"), 25, "mp3", false);
         let (out, info) = tools.normalize(&mp3, dir.path(), "b").await.unwrap();
         assert!(suffix_of(&out) == "mp3" && info.codec == "mp3");
-        assert!(crate::tagging::read_tags(&out).get("title").is_none());
+        assert!(!crate::tagging::read_tags(&out).contains_key("title"));
     }
 
     #[tokio::test]
@@ -360,12 +491,20 @@ pub mod tests {
         let shifted: Vec<u32> = std::iter::repeat_n(0, 3).chain(a.iter().copied()).collect();
         assert_eq!(fingerprint_similarity(&a, &shifted, 5), 1.0);
         assert_eq!(fingerprint_similarity(&a, &[], 5), 0.0);
-        assert_eq!(fingerprint_similarity(&a[..10], &a[..10], 5), 0.0, "too few pairs");
+        assert_eq!(
+            fingerprint_similarity(&a[..10], &a[..10], 5),
+            0.0,
+            "too few pairs"
+        );
     }
 
     #[tokio::test]
     async fn missing_tools_are_errors_not_panics() {
-        let tools = Tools { ffmpeg: "/nope/ffmpeg".into(), ffprobe: "/nope/ffprobe".into(), fpcalc: "/nope/fpcalc".into() };
+        let tools = Tools {
+            ffmpeg: "/nope/ffmpeg".into(),
+            ffprobe: "/nope/ffprobe".into(),
+            fpcalc: "/nope/fpcalc".into(),
+        };
         assert!(tools.probe(Path::new("/tmp/x")).await.is_err());
         assert!(tools.fingerprint(Path::new("/tmp/x"), 10).await.is_none());
         assert!(tools.available().await.iter().all(|(_, ok)| !ok));

@@ -29,7 +29,8 @@ use tokio_util::sync::CancellationToken;
 
 pub const MIN_SCORE: f64 = 55.0;
 pub const YOUTUBE_FORMAT: &str = "bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]/bestaudio";
-pub const SOUNDCLOUD_FORMAT: &str = "bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]/bestaudio[ext=mp3]/bestaudio";
+pub const SOUNDCLOUD_FORMAT: &str =
+    "bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]/bestaudio[ext=mp3]/bestaudio";
 const PERMANENT_HINTS: [&str; 9] = [
     "drm",
     "private video",
@@ -70,7 +71,10 @@ pub enum SourceError {
 
 impl SourceError {
     pub fn new(message: impl Into<String>, transient: bool) -> Self {
-        Self::Failed { message: message.into(), transient }
+        Self::Failed {
+            message: message.into(),
+            transient,
+        }
     }
 
     pub fn transient(&self) -> bool {
@@ -96,13 +100,29 @@ pub struct YtmTrack {
 
 /// The network side of `Sources`; tests replace it.
 pub trait Backend: Send + Sync {
-    fn ytmusic_search(&self, query: String, filter: Option<&'static str>, limit: usize) -> BoxFuture<'_, Result<Vec<YtmTrack>, String>>;
+    fn ytmusic_search(
+        &self,
+        query: String,
+        filter: Option<&'static str>,
+        limit: usize,
+    ) -> BoxFuture<'_, Result<Vec<YtmTrack>, String>>;
     /// yt-dlp `ytsearchN:` / `scsearchN:` entries.
     fn flat_search(&self, query: String) -> BoxFuture<'_, Result<Vec<Json>, String>>;
     /// The chosen audio format of `url` (direct URL, headers, size), without downloading.
-    fn resolve(&self, url: String, format: &'static str) -> BoxFuture<'_, Result<Json, SourceError>>;
+    fn resolve(
+        &self,
+        url: String,
+        format: &'static str,
+    ) -> BoxFuture<'_, Result<Json, SourceError>>;
     /// yt-dlp's own downloader into `dest/source.<ext>`.
-    fn download(&self, url: String, format: &'static str, dest: PathBuf, cancel: CancellationToken, deadline: Instant) -> BoxFuture<'_, Result<PathBuf, SourceError>>;
+    fn download(
+        &self,
+        url: String,
+        format: &'static str,
+        dest: PathBuf,
+        cancel: CancellationToken,
+        deadline: Instant,
+    ) -> BoxFuture<'_, Result<PathBuf, SourceError>>;
 }
 
 pub struct Sources {
@@ -116,13 +136,30 @@ pub struct Sources {
 
 impl Sources {
     pub fn new(tolerance: f64, backend: Arc<dyn Backend>) -> Self {
-        let http = reqwest::Client::builder().connect_timeout(Duration::from_secs(10)).build().expect("http client");
-        Self { tolerance, backend, fresh_url_grace: Duration::from_secs(5), http }
+        let http = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(10))
+            .build()
+            .expect("http client");
+        Self {
+            tolerance,
+            backend,
+            fresh_url_grace: Duration::from_secs(5),
+            http,
+        }
     }
 
     // --------------------------------------------------------------- search
-    pub async fn ytmusic(&self, query: &str, filter: Option<&'static str>, limit: usize) -> Vec<YtmTrack> {
-        match self.backend.ytmusic_search(query.to_string(), filter, limit).await {
+    pub async fn ytmusic(
+        &self,
+        query: &str,
+        filter: Option<&'static str>,
+        limit: usize,
+    ) -> Vec<YtmTrack> {
+        match self
+            .backend
+            .ytmusic_search(query.to_string(), filter, limit)
+            .await
+        {
             Ok(rows) => rows,
             Err(e) => {
                 tracing::warn!("YouTube Music search failed for {query:?}: {e}");
@@ -154,14 +191,22 @@ impl Sources {
         cand.score = scored.score;
         cand.reasons = scored.reasons;
         if scored.rejected.is_some() || scored.score < MIN_SCORE {
-            tracing::debug!("reject {} {:?} by {:?}: {:?}", cand.source, cand.title, cand.uploader, cand.reasons);
+            tracing::debug!(
+                "reject {} {:?} by {:?}: {:?}",
+                cand.source,
+                cand.title,
+                cand.uploader,
+                cand.reasons
+            );
             return None;
         }
         Some(cand)
     }
 
     async fn youtube_music_candidates(&self, wanted: &Wanted) -> Vec<Candidate> {
-        let query = format!("{} {}", wanted.artists.join(" "), wanted.title).trim().to_string();
+        let query = format!("{} {}", wanted.artists.join(" "), wanted.title)
+            .trim()
+            .to_string();
         let mut out: Vec<Candidate> = self
             .ytmusic(&query, Some("songs"), 10)
             .await
@@ -198,15 +243,22 @@ impl Sources {
                 if reference.len() != 11 {
                     continue;
                 }
-                (format!("https://www.youtube.com/watch?v={reference}"), reference)
+                (
+                    format!("https://www.youtube.com/watch?v={reference}"),
+                    reference,
+                )
             } else {
-                let url = opt_str(e.get("url")).or_else(|| opt_str(e.get("webpage_url"))).unwrap_or_default();
+                let url = opt_str(e.get("url"))
+                    .or_else(|| opt_str(e.get("webpage_url")))
+                    .unwrap_or_default();
                 if url.is_empty() {
                     continue;
                 }
                 (url.clone(), opt_str(e.get("id")).unwrap_or(url))
             };
-            let uploader = opt_str(e.get("channel")).or_else(|| opt_str(e.get("uploader"))).unwrap_or_default();
+            let uploader = opt_str(e.get("channel"))
+                .or_else(|| opt_str(e.get("uploader")))
+                .unwrap_or_default();
             let cand = Candidate {
                 source: source.into(),
                 url,
@@ -225,22 +277,42 @@ impl Sources {
 
     /// Acceptable candidates, best first. YouTube Music first; others only if it fails.
     pub async fn find(&self, wanted: &Wanted, exclude: &HashSet<String>) -> Vec<Candidate> {
-        let primary: Vec<_> =
-            self.youtube_music_candidates(wanted).await.into_iter().filter(|c| !exclude.contains(&c.reference)).collect();
+        let primary: Vec<_> = self
+            .youtube_music_candidates(wanted)
+            .await
+            .into_iter()
+            .filter(|c| !exclude.contains(&c.reference))
+            .collect();
         if !primary.is_empty() {
             return primary;
         }
-        let (youtube, soundcloud) =
-            tokio::join!(self.flat("youtube", "ytsearch8", wanted), self.flat("soundcloud", "scsearch8", wanted));
-        let mut rest: Vec<_> = youtube.into_iter().chain(soundcloud).filter(|c| !exclude.contains(&c.reference)).collect();
+        let (youtube, soundcloud) = tokio::join!(
+            self.flat("youtube", "ytsearch8", wanted),
+            self.flat("soundcloud", "scsearch8", wanted)
+        );
+        let mut rest: Vec<_> = youtube
+            .into_iter()
+            .chain(soundcloud)
+            .filter(|c| !exclude.contains(&c.reference))
+            .collect();
         sort_by_score(&mut rest);
         rest
     }
 
     // ------------------------------------------------------------- download
     /// Download `cand` into `dest_dir` and return the raw file.
-    pub async fn download(&self, cand: &Candidate, dest_dir: &Path, timeout: Duration, cancel: &CancellationToken) -> Result<PathBuf, SourceError> {
-        let format = if cand.source == "youtube" { YOUTUBE_FORMAT } else { SOUNDCLOUD_FORMAT };
+    pub async fn download(
+        &self,
+        cand: &Candidate,
+        dest_dir: &Path,
+        timeout: Duration,
+        cancel: &CancellationToken,
+    ) -> Result<PathBuf, SourceError> {
+        let format = if cand.source == "youtube" {
+            YOUTUBE_FORMAT
+        } else {
+            SOUNDCLOUD_FORMAT
+        };
         let deadline = Instant::now() + timeout;
         if cand.source == "youtube" {
             let info = tokio::select! {
@@ -248,18 +320,43 @@ impl Sources {
                 _ = cancel.cancelled() => return Err(SourceError::Cancelled),
                 info = self.backend.resolve(cand.url.clone(), format) => info?,
             };
-            match fetch_direct(&self.http, &info, dest_dir, deadline, 4, self.fresh_url_grace, cancel).await {
+            match fetch_direct(
+                &self.http,
+                &info,
+                dest_dir,
+                deadline,
+                4,
+                self.fresh_url_grace,
+                cancel,
+            )
+            .await
+            {
                 Ok(path) => return Ok(path),
                 Err(SourceError::Cancelled) => return Err(SourceError::Cancelled),
-                Err(e) => tracing::info!("{}: direct fetch failed ({e}); using yt-dlp", cand.reference),
+                Err(e) => tracing::info!(
+                    "{}: direct fetch failed ({e}); using yt-dlp",
+                    cand.reference
+                ),
             }
         }
-        self.backend.download(cand.url.clone(), format, dest_dir.to_path_buf(), cancel.clone(), deadline).await
+        self.backend
+            .download(
+                cand.url.clone(),
+                format,
+                dest_dir.to_path_buf(),
+                cancel.clone(),
+                deadline,
+            )
+            .await
     }
 }
 
 fn sort_by_score(list: &mut [Candidate]) {
-    list.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    list.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 }
 
 /// Fetch a resolved progressive (non-HLS/DASH-manifest) format with parallel range requests.
@@ -281,21 +378,38 @@ pub async fn fetch_direct(
     let mut headers = reqwest::header::HeaderMap::new();
     if let Some(Value::Object(h)) = info.get("http_headers") {
         for (k, v) in h {
-            if let (Ok(name), Ok(value)) = (reqwest::header::HeaderName::try_from(k.as_str()), reqwest::header::HeaderValue::try_from(as_str(Some(v)))) {
+            if let (Ok(name), Ok(value)) = (
+                reqwest::header::HeaderName::try_from(k.as_str()),
+                reqwest::header::HeaderValue::try_from(as_str(Some(v))),
+            ) {
                 headers.insert(name, value);
             }
         }
     }
     let chunk = (256 * 1024).max(size.div_ceil(parts.max(1)));
-    let ranges: Vec<(u64, u64)> = (0..size).step_by(chunk as usize).map(|start| (start, (start + chunk).min(size) - 1)).collect();
-    let remaining = deadline.saturating_duration_since(Instant::now()).max(Duration::from_secs(5));
+    let ranges: Vec<(u64, u64)> = (0..size)
+        .step_by(chunk as usize)
+        .map(|start| (start, (start + chunk).min(size) - 1))
+        .collect();
+    let remaining = deadline
+        .saturating_duration_since(Instant::now())
+        .max(Duration::from_secs(5));
     let started = Instant::now();
     let one = |first: u64, last: u64| {
-        let request = http.get(&url).headers(headers.clone()).header("Range", format!("bytes={first}-{last}")).timeout(remaining);
+        let request = http
+            .get(&url)
+            .headers(headers.clone())
+            .header("Range", format!("bytes={first}-{last}"))
+            .timeout(remaining);
         async move {
             let response = loop {
-                let attempt = request.try_clone().ok_or_else(|| SourceError::new("direct fetch: request not clonable", true))?;
-                let response = attempt.send().await.map_err(|e| SourceError::new(format!("direct fetch: {e}"), true))?;
+                let attempt = request
+                    .try_clone()
+                    .ok_or_else(|| SourceError::new("direct fetch: request not clonable", true))?;
+                let response = attempt
+                    .send()
+                    .await
+                    .map_err(|e| SourceError::new(format!("direct fetch: {e}"), true))?;
                 if response.status().as_u16() == 403 && started.elapsed() < grace {
                     tokio::time::sleep(Duration::from_millis(250)).await;
                     continue;
@@ -303,7 +417,10 @@ pub async fn fetch_direct(
                 break response;
             };
             if response.status().as_u16() != 206 {
-                return Err(SourceError::new(format!("direct fetch: HTTP {}", response.status().as_u16()), true));
+                return Err(SourceError::new(
+                    format!("direct fetch: HTTP {}", response.status().as_u16()),
+                    true,
+                ));
             }
             let mut data = Vec::with_capacity((last - first + 1) as usize);
             let mut stream = response.bytes_stream();
@@ -311,7 +428,9 @@ pub async fn fetch_direct(
                 if cancel.is_cancelled() {
                     return Err(SourceError::Cancelled);
                 }
-                data.extend_from_slice(&piece.map_err(|e| SourceError::new(format!("direct fetch: {e}"), true))?);
+                data.extend_from_slice(
+                    &piece.map_err(|e| SourceError::new(format!("direct fetch: {e}"), true))?,
+                );
             }
             if data.len() as u64 != last - first + 1 {
                 return Err(SourceError::new("direct fetch: short read", true));
@@ -324,16 +443,21 @@ pub async fn fetch_direct(
         _ = cancel.cancelled() => return Err(SourceError::Cancelled),
         blobs = futures::future::try_join_all(ranges.iter().map(|(a, b)| one(*a, *b))) => blobs?,
     };
-    tokio::fs::create_dir_all(dest_dir).await.map_err(|e| SourceError::new(e.to_string(), true))?;
+    tokio::fs::create_dir_all(dest_dir)
+        .await
+        .map_err(|e| SourceError::new(e.to_string(), true))?;
     let ext = opt_str(info.get("ext")).unwrap_or_else(|| "m4a".into());
     let path = dest_dir.join(format!("source.{ext}"));
-    tokio::fs::write(&path, blobs.concat()).await.map_err(|e| SourceError::new(e.to_string(), true))?;
+    tokio::fs::write(&path, blobs.concat())
+        .await
+        .map_err(|e| SourceError::new(e.to_string(), true))?;
     Ok(path)
 }
 
 // ------------------------------------------------------------ YouTube Music
 pub const YTMUSIC: &str = "https://music.youtube.com";
-const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:88.0) Gecko/20100101 Firefox/88.0";
+const USER_AGENT: &str =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:88.0) Gecko/20100101 Firefox/88.0";
 
 fn filter_params(filter: &str) -> Option<&'static str> {
     match filter {
@@ -347,16 +471,29 @@ fn filter_params(filter: &str) -> Option<&'static str> {
 
 fn parse_duration(text: &str) -> Option<f64> {
     let parts: Vec<&str> = text.trim().split(':').collect();
-    if text.trim().is_empty() || parts.iter().any(|p| p.is_empty() || !p.bytes().all(|b| b.is_ascii_digit())) {
+    if text.trim().is_empty()
+        || parts
+            .iter()
+            .any(|p| p.is_empty() || !p.bytes().all(|b| b.is_ascii_digit()))
+    {
         return None;
     }
-    let seconds: u64 = [1u64, 60, 3600].iter().zip(parts.iter().rev()).map(|(m, p)| m * p.parse::<u64>().unwrap_or(0)).sum();
+    let seconds: u64 = [1u64, 60, 3600]
+        .iter()
+        .zip(parts.iter().rev())
+        .map(|(m, p)| m * p.parse::<u64>().unwrap_or(0))
+        .sum();
     Some(seconds as f64)
 }
 
 fn runs(column: Option<&Value>) -> Vec<Value> {
     column
-        .and_then(|c| path(c, &["musicResponsiveListItemFlexColumnRenderer", "text", "runs"]))
+        .and_then(|c| {
+            path(
+                c,
+                &["musicResponsiveListItemFlexColumnRenderer", "text", "runs"],
+            )
+        })
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default()
@@ -364,14 +501,31 @@ fn runs(column: Option<&Value>) -> Vec<Value> {
 
 /// One `musicResponsiveListItemRenderer` with a playable video, normalized.
 pub fn parse_item(item: &Value, kind: &str) -> Option<YtmTrack> {
-    let watch = path(item, &["overlay", "musicItemThumbnailOverlayRenderer", "content", "musicPlayButtonRenderer", "playNavigationEndpoint", "watchEndpoint"]);
+    let watch = path(
+        item,
+        &[
+            "overlay",
+            "musicItemThumbnailOverlayRenderer",
+            "content",
+            "musicPlayButtonRenderer",
+            "playNavigationEndpoint",
+            "watchEndpoint",
+        ],
+    );
     let video_id = watch
         .and_then(|w| w.get("videoId"))
         .or_else(|| path(item, &["playlistItemData", "videoId"]))
         .and_then(Value::as_str)?
         .to_string();
-    let columns = item.get("flexColumns").and_then(Value::as_array).cloned().unwrap_or_default();
-    let title = runs(columns.first()).first().map(|r| as_str(r.get("text"))).unwrap_or_default();
+    let columns = item
+        .get("flexColumns")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let title = runs(columns.first())
+        .first()
+        .map(|r| as_str(r.get("text")))
+        .unwrap_or_default();
     let mut line = runs(columns.get(1));
     if let Some(third) = columns.get(2) {
         // A dummy separator keeps the play-count run on an even index.
@@ -384,33 +538,62 @@ pub fn parse_item(item: &Value, kind: &str) -> Option<YtmTrack> {
             continue;
         }
         let text = as_str(run.get("text"));
-        match path(run, &["navigationEndpoint", "browseEndpoint", "browseId"]).and_then(Value::as_str) {
-            Some(id) if id.starts_with("MPRE") || id.contains("release_detail") => album = Some(text),
+        match path(run, &["navigationEndpoint", "browseEndpoint", "browseId"])
+            .and_then(Value::as_str)
+        {
+            Some(id) if id.starts_with("MPRE") || id.contains("release_detail") => {
+                album = Some(text)
+            }
             Some(_) => artists.push(text),
             None => {
                 if let Some(d) = parse_duration(&text) {
                     duration = Some(d);
                 } else if text.len() == 4 && text.bytes().all(|b| b.is_ascii_digit()) {
                     // a year
-                } else if text.starts_with(|c: char| c.is_ascii_digit()) && (text.contains(' ') || !text.is_ascii()) {
+                } else if text.starts_with(|c: char| c.is_ascii_digit())
+                    && (text.contains(' ') || !text.is_ascii())
+                {
                     // a play count
-                } else if !text.is_empty() && !matches!(text.as_str(), "Song" | "Video" | "Episode") {
+                } else if !text.is_empty() && !matches!(text.as_str(), "Song" | "Video" | "Episode")
+                {
                     artists.push(text);
                 }
             }
         }
     }
-    let thumbnail = path(item, &["thumbnail", "musicThumbnailRenderer", "thumbnail", "thumbnails"])
-        .and_then(Value::as_array)
-        .and_then(|t| t.last())
-        .and_then(|t| opt_str(t.get("url")));
+    let thumbnail = path(
+        item,
+        &[
+            "thumbnail",
+            "musicThumbnailRenderer",
+            "thumbnail",
+            "thumbnails",
+        ],
+    )
+    .and_then(Value::as_array)
+    .and_then(|t| t.last())
+    .and_then(|t| opt_str(t.get("url")));
     let explicit = path(item, &["badges"])
         .and_then(Value::as_array)
         .and_then(|b| b.first())
-        .and_then(|b| path(b, &["musicInlineBadgeRenderer", "accessibilityData", "accessibilityData", "label"]))
+        .and_then(|b| {
+            path(
+                b,
+                &[
+                    "musicInlineBadgeRenderer",
+                    "accessibilityData",
+                    "accessibilityData",
+                    "label",
+                ],
+            )
+        })
         .is_some();
     Some(YtmTrack {
-        title: if title.is_empty() { video_id.clone() } else { title },
+        title: if title.is_empty() {
+            video_id.clone()
+        } else {
+            title
+        },
         video_id,
         artists,
         album,
@@ -423,22 +606,46 @@ pub fn parse_item(item: &Value, kind: &str) -> Option<YtmTrack> {
 
 /// Rows and the continuation token of a search page (first page or continuation).
 pub fn parse_search(response: &Value, kind: &str) -> (Vec<YtmTrack>, Option<String>) {
-    let shelves: Vec<Value> = if let Some(cont) = path(response, &["continuationContents", "musicShelfContinuation"]) {
+    let shelves: Vec<Value> = if let Some(cont) = path(
+        response,
+        &["continuationContents", "musicShelfContinuation"],
+    ) {
         vec![cont.clone()]
     } else {
-        path(response, &["contents", "tabbedSearchResultsRenderer", "tabs"])
-            .and_then(Value::as_array)
-            .and_then(|tabs| tabs.first())
-            .and_then(|t| path(t, &["tabRenderer", "content", "sectionListRenderer", "contents"]))
-            .and_then(Value::as_array)
-            .map(|sections| sections.iter().filter_map(|s| s.get("musicShelfRenderer").cloned()).collect())
-            .unwrap_or_default()
+        path(
+            response,
+            &["contents", "tabbedSearchResultsRenderer", "tabs"],
+        )
+        .and_then(Value::as_array)
+        .and_then(|tabs| tabs.first())
+        .and_then(|t| {
+            path(
+                t,
+                &["tabRenderer", "content", "sectionListRenderer", "contents"],
+            )
+        })
+        .and_then(Value::as_array)
+        .map(|sections| {
+            sections
+                .iter()
+                .filter_map(|s| s.get("musicShelfRenderer").cloned())
+                .collect()
+        })
+        .unwrap_or_default()
     };
     let mut rows = Vec::new();
     let mut token = None;
     for shelf in shelves {
-        for item in shelf.get("contents").and_then(Value::as_array).into_iter().flatten() {
-            if let Some(r) = item.get("musicResponsiveListItemRenderer").and_then(|i| parse_item(i, kind)) {
+        for item in shelf
+            .get("contents")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if let Some(r) = item
+                .get("musicResponsiveListItemRenderer")
+                .and_then(|i| parse_item(i, kind))
+            {
                 rows.push(r);
             }
         }
@@ -457,7 +664,12 @@ pub fn parse_search(response: &Value, kind: &str) -> (Vec<YtmTrack>, Option<Stri
 
 fn client_version() -> String {
     let now = time::OffsetDateTime::now_utc();
-    format!("1.{:04}{:02}{:02}.01.00", now.year(), now.month() as u8, now.day())
+    format!(
+        "1.{:04}{:02}{:02}.01.00",
+        now.year(),
+        now.month() as u8,
+        now.day()
+    )
 }
 
 /// The real backend: YouTube Music innertube over HTTP, everything else through yt-dlp.
@@ -481,13 +693,29 @@ impl YtBackend {
             .user_agent(USER_AGENT)
             .build()
             .expect("http client");
-        Self { http, ytmusic_url: ytmusic_url.trim_end_matches('/').into(), visitor: Default::default(), ytdlp: ytdlp.into(), ytdlp_args, fast_client: None }
+        Self {
+            http,
+            ytmusic_url: ytmusic_url.trim_end_matches('/').into(),
+            visitor: Default::default(),
+            ytdlp: ytdlp.into(),
+            ytdlp_args,
+            fast_client: None,
+        }
     }
 
     async fn visitor_id(&self) -> Option<String> {
         self.visitor
             .get_or_init(|| async {
-                let html = self.http.get(format!("{}/", self.ytmusic_url)).header("Cookie", "SOCS=CAI").send().await.ok()?.text().await.ok()?;
+                let html = self
+                    .http
+                    .get(format!("{}/", self.ytmusic_url))
+                    .header("Cookie", "SOCS=CAI")
+                    .send()
+                    .await
+                    .ok()?
+                    .text()
+                    .await
+                    .ok()?;
                 let start = html.find("\"VISITOR_DATA\":\"")? + "\"VISITOR_DATA\":\"".len();
                 let end = html[start..].find('"')? + start;
                 Some(html[start..end].to_string())
@@ -496,7 +724,12 @@ impl YtBackend {
             .clone()
     }
 
-    async fn search_page(&self, query: &str, filter: Option<&str>, continuation: Option<&str>) -> Result<Value, String> {
+    async fn search_page(
+        &self,
+        query: &str,
+        filter: Option<&str>,
+        continuation: Option<&str>,
+    ) -> Result<Value, String> {
         let mut body = json!({
             "query": query,
             "context": {"client": {"clientName": "WEB_REMIX", "clientVersion": client_version(), "hl": "en"}, "user": {}},
@@ -508,7 +741,12 @@ impl YtBackend {
         if let Some(token) = continuation {
             url.push_str(&format!("&ctoken={token}&continuation={token}"));
         }
-        let mut request = self.http.post(url).json(&body).header("Origin", "https://music.youtube.com").header("Cookie", "SOCS=CAI");
+        let mut request = self
+            .http
+            .post(url)
+            .json(&body)
+            .header("Origin", "https://music.youtube.com")
+            .header("Cookie", "SOCS=CAI");
         if let Some(visitor) = self.visitor_id().await {
             request = request.header("X-Goog-Visitor-Id", visitor);
         }
@@ -519,13 +757,22 @@ impl YtBackend {
         response.json().await.map_err(|e| e.to_string())
     }
 
-    async fn search(&self, query: &str, filter: &'static str, limit: usize) -> Result<Vec<YtmTrack>, String> {
+    async fn search(
+        &self,
+        query: &str,
+        filter: &'static str,
+        limit: usize,
+    ) -> Result<Vec<YtmTrack>, String> {
         let kind = if filter == "videos" { "video" } else { "song" };
-        let (mut rows, mut token) = parse_search(&self.search_page(query, Some(filter), None).await?, kind);
+        let (mut rows, mut token) =
+            parse_search(&self.search_page(query, Some(filter), None).await?, kind);
         while rows.len() < limit
             && let Some(t) = token.take()
         {
-            let (more, next) = parse_search(&self.search_page(query, Some(filter), Some(&t)).await?, kind);
+            let (more, next) = parse_search(
+                &self.search_page(query, Some(filter), Some(&t)).await?,
+                kind,
+            );
             if more.is_empty() {
                 break;
             }
@@ -536,10 +783,32 @@ impl YtBackend {
         Ok(rows)
     }
 
-    async fn resolve_with(&self, url: &str, format: &str, client: &[&str]) -> Result<Json, SourceError> {
+    async fn resolve_with(
+        &self,
+        url: &str,
+        format: &str,
+        client: &[&str],
+    ) -> Result<Json, SourceError> {
         let mut extra: Vec<&str> = client.to_vec();
-        extra.extend(["-J", "--no-playlist", "-f", format, "--no-warnings", "--socket-timeout", "20", "--", url]);
-        let out = process::run(&self.ytdlp, &self.ytdlp_command(&extra), Duration::from_secs(90), None).await.map_err(run_error)?;
+        extra.extend([
+            "-J",
+            "--no-playlist",
+            "-f",
+            format,
+            "--no-warnings",
+            "--socket-timeout",
+            "20",
+            "--",
+            url,
+        ]);
+        let out = process::run(
+            &self.ytdlp,
+            &self.ytdlp_command(&extra),
+            Duration::from_secs(90),
+            None,
+        )
+        .await
+        .map_err(run_error)?;
         if !out.success() {
             return Err(ytdlp_error(&out.stderr_text()));
         }
@@ -557,8 +826,13 @@ impl YtBackend {
 }
 
 fn ytdlp_error(text: &str) -> SourceError {
-    let permanent = PERMANENT_HINTS.iter().any(|h| text.to_lowercase().contains(h));
-    SourceError::new(format!("yt-dlp: {}", crate::util::tail(text, 500)), !permanent)
+    let permanent = PERMANENT_HINTS
+        .iter()
+        .any(|h| text.to_lowercase().contains(h));
+    SourceError::new(
+        format!("yt-dlp: {}", crate::util::tail(text, 500)),
+        !permanent,
+    )
 }
 
 fn run_error(e: RunError) -> SourceError {
@@ -570,13 +844,21 @@ fn run_error(e: RunError) -> SourceError {
 }
 
 impl Backend for YtBackend {
-    fn ytmusic_search(&self, query: String, filter: Option<&'static str>, limit: usize) -> BoxFuture<'_, Result<Vec<YtmTrack>, String>> {
+    fn ytmusic_search(
+        &self,
+        query: String,
+        filter: Option<&'static str>,
+        limit: usize,
+    ) -> BoxFuture<'_, Result<Vec<YtmTrack>, String>> {
         async move {
             match filter {
                 Some(f) => self.search(&query, f, limit).await,
                 None => {
                     // Unfiltered: official songs first, then videos.
-                    let (songs, videos) = tokio::join!(self.search(&query, "songs", limit), self.search(&query, "videos", limit));
+                    let (songs, videos) = tokio::join!(
+                        self.search(&query, "songs", limit),
+                        self.search(&query, "videos", limit)
+                    );
                     if let (Err(e), Err(_)) = (&songs, &videos) {
                         return Err(e.clone());
                     }
@@ -594,24 +876,60 @@ impl Backend for YtBackend {
 
     fn flat_search(&self, query: String) -> BoxFuture<'_, Result<Vec<Json>, String>> {
         async move {
-            let args = self.ytdlp_command(&["--flat-playlist", "-J", "--no-warnings", "--socket-timeout", "15", "--", &query]);
-            let out = process::run(&self.ytdlp, &args, Duration::from_secs(45), None).await.map_err(|e| e.to_string())?;
+            let args = self.ytdlp_command(&[
+                "--flat-playlist",
+                "-J",
+                "--no-warnings",
+                "--socket-timeout",
+                "15",
+                "--",
+                &query,
+            ]);
+            let out = process::run(&self.ytdlp, &args, Duration::from_secs(45), None)
+                .await
+                .map_err(|e| e.to_string())?;
             if !out.success() {
                 return Err(crate::util::tail(&out.stderr_text(), 300));
             }
             let info: Value = serde_json::from_slice(&out.stdout).map_err(|e| e.to_string())?;
-            Ok(info.get("entries").and_then(Value::as_array).into_iter().flatten().filter_map(|e| e.as_object().cloned()).collect())
+            Ok(info
+                .get("entries")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|e| e.as_object().cloned())
+                .collect())
         }
         .boxed()
     }
 
-    fn resolve(&self, url: String, format: &'static str) -> BoxFuture<'_, Result<Json, SourceError>> {
+    fn resolve(
+        &self,
+        url: String,
+        format: &'static str,
+    ) -> BoxFuture<'_, Result<Json, SourceError>> {
         async move {
             let chosen = self.ytdlp_args.iter().any(|a| a.contains("player_client"));
-            if let Some(client) = self.fast_client.as_deref().filter(|c| !c.is_empty() && !chosen) {
-                match self.resolve_with(&url, format, &["--extractor-args", &format!("youtube:player_client={client}")]).await {
+            if let Some(client) = self
+                .fast_client
+                .as_deref()
+                .filter(|c| !c.is_empty() && !chosen)
+            {
+                match self
+                    .resolve_with(
+                        &url,
+                        format,
+                        &[
+                            "--extractor-args",
+                            &format!("youtube:player_client={client}"),
+                        ],
+                    )
+                    .await
+                {
                     Ok(info) => return Ok(info),
-                    Err(e) => tracing::info!("{client} resolve of {url} failed ({e}); using yt-dlp defaults"),
+                    Err(e) => tracing::info!(
+                        "{client} resolve of {url} failed ({e}); using yt-dlp defaults"
+                    ),
                 }
             }
             self.resolve_with(&url, format, &[]).await
@@ -619,23 +937,51 @@ impl Backend for YtBackend {
         .boxed()
     }
 
-    fn download(&self, url: String, format: &'static str, dest: PathBuf, cancel: CancellationToken, deadline: Instant) -> BoxFuture<'_, Result<PathBuf, SourceError>> {
+    fn download(
+        &self,
+        url: String,
+        format: &'static str,
+        dest: PathBuf,
+        cancel: CancellationToken,
+        deadline: Instant,
+    ) -> BoxFuture<'_, Result<PathBuf, SourceError>> {
         async move {
-            tokio::fs::create_dir_all(&dest).await.map_err(|e| SourceError::new(e.to_string(), true))?;
+            tokio::fs::create_dir_all(&dest)
+                .await
+                .map_err(|e| SourceError::new(e.to_string(), true))?;
             let template = dest.join("source.%(ext)s").display().to_string();
             let args = self.ytdlp_command(&[
-                "-f", format, "-o", &template, "--no-playlist", "--retries", "3", "--fragment-retries", "3",
-                "--socket-timeout", "20", "--no-part", "--force-overwrites", "--no-warnings", "--quiet", "--no-progress", "--", &url,
+                "-f",
+                format,
+                "-o",
+                &template,
+                "--no-playlist",
+                "--retries",
+                "3",
+                "--fragment-retries",
+                "3",
+                "--socket-timeout",
+                "20",
+                "--no-part",
+                "--force-overwrites",
+                "--no-warnings",
+                "--quiet",
+                "--no-progress",
+                "--",
+                &url,
             ]);
             let timeout = deadline.saturating_duration_since(Instant::now());
-            let out = process::run(&self.ytdlp, &args, timeout, Some(&cancel)).await.map_err(|e| match e {
-                RunError::Timeout(_) => SourceError::new("download timed out", true),
-                other => run_error(other),
-            })?;
+            let out = process::run(&self.ytdlp, &args, timeout, Some(&cancel))
+                .await
+                .map_err(|e| match e {
+                    RunError::Timeout(_) => SourceError::new("download timed out", true),
+                    other => run_error(other),
+                })?;
             if !out.success() {
                 return Err(ytdlp_error(&out.stderr_text()));
             }
-            find_source(&dest).ok_or_else(|| SourceError::new("yt-dlp finished without an audio file", true))
+            find_source(&dest)
+                .ok_or_else(|| SourceError::new("yt-dlp finished without an audio file", true))
         }
         .boxed()
     }
@@ -646,7 +992,12 @@ fn find_source(dir: &Path) -> Option<PathBuf> {
         .ok()?
         .flatten()
         .map(|e| e.path())
-        .find(|p| p.is_file() && p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("source.")))
+        .find(|p| {
+            p.is_file()
+                && p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with("source."))
+        })
 }
 
 #[cfg(test)]
@@ -669,23 +1020,51 @@ pub mod tests {
     }
 
     impl Backend for FakeBackend {
-        fn ytmusic_search(&self, _q: String, _f: Option<&'static str>, _n: usize) -> BoxFuture<'_, Result<Vec<YtmTrack>, String>> {
-            let result = if self.ytm_fails { Err("network down".to_string()) } else { Ok(self.ytm.clone()) };
+        fn ytmusic_search(
+            &self,
+            _q: String,
+            _f: Option<&'static str>,
+            _n: usize,
+        ) -> BoxFuture<'_, Result<Vec<YtmTrack>, String>> {
+            let result = if self.ytm_fails {
+                Err("network down".to_string())
+            } else {
+                Ok(self.ytm.clone())
+            };
             async move { result }.boxed()
         }
 
         fn flat_search(&self, query: String) -> BoxFuture<'_, Result<Vec<Json>, String>> {
             self.flat_calls.lock().push(query.clone());
-            let rows = self.flat.iter().find(|(p, _)| query.starts_with(p.as_str())).map(|(_, r)| r.clone()).unwrap_or_default();
+            let rows = self
+                .flat
+                .iter()
+                .find(|(p, _)| query.starts_with(p.as_str()))
+                .map(|(_, r)| r.clone())
+                .unwrap_or_default();
             async move { Ok(rows) }.boxed()
         }
 
-        fn resolve(&self, _url: String, _f: &'static str) -> BoxFuture<'_, Result<Json, SourceError>> {
-            let info = self.info.clone().ok_or_else(|| SourceError::new("no info", true));
+        fn resolve(
+            &self,
+            _url: String,
+            _f: &'static str,
+        ) -> BoxFuture<'_, Result<Json, SourceError>> {
+            let info = self
+                .info
+                .clone()
+                .ok_or_else(|| SourceError::new("no info", true));
             async move { info }.boxed()
         }
 
-        fn download(&self, url: String, format: &'static str, dest: PathBuf, _c: CancellationToken, _d: Instant) -> BoxFuture<'_, Result<PathBuf, SourceError>> {
+        fn download(
+            &self,
+            url: String,
+            format: &'static str,
+            dest: PathBuf,
+            _c: CancellationToken,
+            _d: Instant,
+        ) -> BoxFuture<'_, Result<PathBuf, SourceError>> {
             self.downloads.lock().push((url, format.to_string()));
             let err = self.download_error.clone();
             let ext = self.download_ext.clone().unwrap_or_else(|| "m4a".into());
@@ -702,7 +1081,13 @@ pub mod tests {
         }
     }
 
-    fn ytm(id: &str, title: &str, artists: &[&str], album: Option<&str>, duration: f64) -> YtmTrack {
+    fn ytm(
+        id: &str,
+        title: &str,
+        artists: &[&str],
+        album: Option<&str>,
+        duration: f64,
+    ) -> YtmTrack {
         YtmTrack {
             video_id: id.into(),
             title: title.into(),
@@ -716,14 +1101,35 @@ pub mod tests {
 
     fn ytm_rows() -> Vec<YtmTrack> {
         vec![
-            ytm("YUyG_nM3Rig", "порезы на руках", &["FORTUNA 812", "elox1m"], Some("x"), 144.0),
-            ytm("Q1QvyIrUzz0", "Порезы на руках", &["Юпи"], Some("Порезы на руках"), 124.0),
-            ytm("gvniJHIecH4", "Порезы на руках (sped up)", &["Юпи"], None, 124.0),
+            ytm(
+                "YUyG_nM3Rig",
+                "порезы на руках",
+                &["FORTUNA 812", "elox1m"],
+                Some("x"),
+                144.0,
+            ),
+            ytm(
+                "Q1QvyIrUzz0",
+                "Порезы на руках",
+                &["Юпи"],
+                Some("Порезы на руках"),
+                124.0,
+            ),
+            ytm(
+                "gvniJHIecH4",
+                "Порезы на руках (sped up)",
+                &["Юпи"],
+                None,
+                124.0,
+            ),
         ]
     }
 
     fn wanted() -> Wanted {
-        Wanted { duration: Some(124.0), ..Wanted::new("Порезы на руках", &["Юпи"]) }
+        Wanted {
+            duration: Some(124.0),
+            ..Wanted::new("Порезы на руках", &["Юпи"])
+        }
     }
 
     fn finder(backend: FakeBackend) -> (Sources, Arc<FakeBackend>) {
@@ -733,46 +1139,108 @@ pub mod tests {
 
     #[tokio::test]
     async fn youtube_music_is_preferred_and_filtered() {
-        let (f, backend) = finder(FakeBackend { ytm: ytm_rows(), ..Default::default() });
+        let (f, backend) = finder(FakeBackend {
+            ytm: ytm_rows(),
+            ..Default::default()
+        });
         let found = f.find(&wanted(), &HashSet::new()).await;
-        assert_eq!(found.iter().map(|c| c.reference.as_str()).collect::<Vec<_>>(), ["Q1QvyIrUzz0"]);
+        assert_eq!(
+            found
+                .iter()
+                .map(|c| c.reference.as_str())
+                .collect::<Vec<_>>(),
+            ["Q1QvyIrUzz0"]
+        );
         assert!(found[0].official && found[0].album.as_deref() == Some("Порезы на руках"));
-        assert!(backend.flat_calls.lock().is_empty(), "fallbacks are not searched");
+        assert!(
+            backend.flat_calls.lock().is_empty(),
+            "fallbacks are not searched"
+        );
     }
 
     #[tokio::test]
     async fn fallback_searches_youtube_and_soundcloud() {
         let backend = FakeBackend {
             flat: vec![
-                ("ytsearch".into(), vec![m(json!({"id": "AAAAAAAAAAA", "title": "Юпи - Порезы на руках (минус)", "channel": "x", "duration": 124}))]),
-                ("scsearch".into(), vec![m(json!({"id": "2398309779", "url": "https://api.soundcloud.com/tracks/2398309779", "title": "Юпи - Порезы на руках", "uploader": "ima", "duration": 121.8}))]),
+                (
+                    "ytsearch".into(),
+                    vec![m(
+                        json!({"id": "AAAAAAAAAAA", "title": "Юпи - Порезы на руках (минус)", "channel": "x", "duration": 124}),
+                    )],
+                ),
+                (
+                    "scsearch".into(),
+                    vec![m(
+                        json!({"id": "2398309779", "url": "https://api.soundcloud.com/tracks/2398309779", "title": "Юпи - Порезы на руках", "uploader": "ima", "duration": 121.8}),
+                    )],
+                ),
             ],
             ..Default::default()
         };
         let (f, _) = finder(backend);
         let found = f.find(&wanted(), &HashSet::new()).await;
-        assert_eq!(found.iter().map(|c| (c.source.as_str(), c.reference.as_str())).collect::<Vec<_>>(), [("soundcloud", "2398309779")]);
+        assert_eq!(
+            found
+                .iter()
+                .map(|c| (c.source.as_str(), c.reference.as_str()))
+                .collect::<Vec<_>>(),
+            [("soundcloud", "2398309779")]
+        );
     }
 
     #[tokio::test]
     async fn search_failure_is_not_fatal_and_exclusions_apply() {
-        let (f, _) = finder(FakeBackend { ytm_fails: true, ..Default::default() });
+        let (f, _) = finder(FakeBackend {
+            ytm_fails: true,
+            ..Default::default()
+        });
         assert!(f.find(&wanted(), &HashSet::new()).await.is_empty());
-        let (f, _) = finder(FakeBackend { ytm: ytm_rows(), ..Default::default() });
-        assert!(f.find(&wanted(), &HashSet::from(["Q1QvyIrUzz0".to_string()])).await.is_empty());
+        let (f, _) = finder(FakeBackend {
+            ytm: ytm_rows(),
+            ..Default::default()
+        });
+        assert!(
+            f.find(&wanted(), &HashSet::from(["Q1QvyIrUzz0".to_string()]))
+                .await
+                .is_empty()
+        );
     }
 
     #[tokio::test]
     async fn soundcloud_download_uses_its_format_and_propagates_errors() {
         let dir = tempfile::tempdir().unwrap();
-        let cand = Candidate { source: "soundcloud".into(), url: "https://sc/1".into(), reference: "1".into(), ..Default::default() };
+        let cand = Candidate {
+            source: "soundcloud".into(),
+            url: "https://sc/1".into(),
+            reference: "1".into(),
+            ..Default::default()
+        };
         let (f, backend) = finder(FakeBackend::default());
         let token = CancellationToken::new();
-        let path = f.download(&cand, &dir.path().join("job"), Duration::from_secs(5), &token).await.unwrap();
+        let path = f
+            .download(
+                &cand,
+                &dir.path().join("job"),
+                Duration::from_secs(5),
+                &token,
+            )
+            .await
+            .unwrap();
         assert_eq!(path, dir.path().join("job/source.m4a"));
         assert_eq!(backend.downloads.lock()[0].1, SOUNDCLOUD_FORMAT);
-        let (f, _) = finder(FakeBackend { download_error: Some(SourceError::new("DRM protected", false)), ..Default::default() });
-        let err = f.download(&cand, &dir.path().join("job2"), Duration::from_secs(5), &token).await.unwrap_err();
+        let (f, _) = finder(FakeBackend {
+            download_error: Some(SourceError::new("DRM protected", false)),
+            ..Default::default()
+        });
+        let err = f
+            .download(
+                &cand,
+                &dir.path().join("job2"),
+                Duration::from_secs(5),
+                &token,
+            )
+            .await
+            .unwrap_err();
         assert!(!err.transient());
     }
 
@@ -785,7 +1253,10 @@ pub mod tests {
     }
 
     /// Answers `status` after refusing the first `refusals` requests with 403.
-    async fn range_server_refusing(status: u16, refusals: usize) -> (crate::testutil::Server, Arc<Mutex<Vec<String>>>) {
+    async fn range_server_refusing(
+        status: u16,
+        refusals: usize,
+    ) -> (crate::testutil::Server, Arc<Mutex<Vec<String>>>) {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let s = seen.clone();
         let router = axum::Router::new().route(
@@ -793,7 +1264,11 @@ pub mod tests {
             axum::routing::get(move |headers: axum::http::HeaderMap| {
                 let s = s.clone();
                 async move {
-                    let range = headers["range"].to_str().unwrap().trim_start_matches("bytes=").to_string();
+                    let range = headers["range"]
+                        .to_str()
+                        .unwrap()
+                        .trim_start_matches("bytes=")
+                        .to_string();
                     let n = {
                         let mut seen = s.lock();
                         seen.push(range.clone());
@@ -803,9 +1278,15 @@ pub mod tests {
                     let (a, b): (usize, usize) = (a.parse().unwrap(), b.parse().unwrap());
                     let status = if n <= refusals { 403 } else { status };
                     if status != 206 {
-                        return axum::response::Response::builder().status(status).body(axum::body::Body::empty()).unwrap();
+                        return axum::response::Response::builder()
+                            .status(status)
+                            .body(axum::body::Body::empty())
+                            .unwrap();
                     }
-                    axum::response::Response::builder().status(206).body(axum::body::Body::from(body()[a..=b].to_vec())).unwrap()
+                    axum::response::Response::builder()
+                        .status(206)
+                        .body(axum::body::Body::from(body()[a..=b].to_vec()))
+                        .unwrap()
                 }
             }),
         );
@@ -813,7 +1294,9 @@ pub mod tests {
     }
 
     fn info(url: &str) -> Json {
-        m(json!({"url": format!("{url}/audio"), "protocol": "https", "filesize": body().len(), "ext": "m4a"}))
+        m(
+            json!({"url": format!("{url}/audio"), "protocol": "https", "filesize": body().len(), "ext": "m4a"}),
+        )
     }
 
     #[tokio::test]
@@ -821,7 +1304,17 @@ pub mod tests {
         let (server, seen) = range_server(206).await;
         let dir = tempfile::tempdir().unwrap();
         let token = CancellationToken::new();
-        let path = fetch_direct(&reqwest::Client::new(), &info(&server.url), dir.path(), Instant::now() + Duration::from_secs(30), 4, Duration::ZERO, &token).await.unwrap();
+        let path = fetch_direct(
+            &reqwest::Client::new(),
+            &info(&server.url),
+            dir.path(),
+            Instant::now() + Duration::from_secs(30),
+            4,
+            Duration::ZERO,
+            &token,
+        )
+        .await
+        .unwrap();
         assert_eq!(path.file_name().unwrap(), "source.m4a");
         assert_eq!(std::fs::read(&path).unwrap(), body());
         assert_eq!(seen.lock().len(), 4);
@@ -833,7 +1326,17 @@ pub mod tests {
         let dir = tempfile::tempdir().unwrap();
         let token = CancellationToken::new();
         let deadline = Instant::now() + Duration::from_secs(30);
-        let path = fetch_direct(&reqwest::Client::new(), &info(&server.url), dir.path(), deadline, 4, Duration::from_secs(5), &token).await.unwrap();
+        let path = fetch_direct(
+            &reqwest::Client::new(),
+            &info(&server.url),
+            dir.path(),
+            deadline,
+            4,
+            Duration::from_secs(5),
+            &token,
+        )
+        .await
+        .unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), body());
         assert_eq!(seen.lock().len(), 6, "two refused requests were retried");
     }
@@ -842,10 +1345,26 @@ pub mod tests {
     async fn download_falls_back_to_ytdlp_when_the_direct_fetch_is_refused() {
         let (server, _) = range_server(403).await;
         let dir = tempfile::tempdir().unwrap();
-        let (mut f, backend) = finder(FakeBackend { info: Some(info(&server.url)), download_ext: Some("webm".into()), ..Default::default() });
+        let (mut f, backend) = finder(FakeBackend {
+            info: Some(info(&server.url)),
+            download_ext: Some("webm".into()),
+            ..Default::default()
+        });
         f.fresh_url_grace = Duration::from_millis(300);
-        let cand = Candidate { source: "youtube".into(), url: "https://youtube.com/watch?v=x".into(), ..Default::default() };
-        let path = f.download(&cand, &dir.path().join("job"), Duration::from_secs(30), &CancellationToken::new()).await.unwrap();
+        let cand = Candidate {
+            source: "youtube".into(),
+            url: "https://youtube.com/watch?v=x".into(),
+            ..Default::default()
+        };
+        let path = f
+            .download(
+                &cand,
+                &dir.path().join("job"),
+                Duration::from_secs(30),
+                &CancellationToken::new(),
+            )
+            .await
+            .unwrap();
         assert_eq!(path.file_name().unwrap(), "source.webm");
         assert_eq!(backend.downloads.lock()[0].1, YOUTUBE_FORMAT);
     }
@@ -855,27 +1374,61 @@ pub mod tests {
         let dir = tempfile::tempdir().unwrap();
         let token = CancellationToken::new();
         let hls = m(json!({"url": "https://x/m.m3u8", "protocol": "m3u8_native"}));
-        assert!(fetch_direct(&reqwest::Client::new(), &hls, dir.path(), Instant::now(), 4, Duration::ZERO, &token).await.is_err());
+        assert!(
+            fetch_direct(
+                &reqwest::Client::new(),
+                &hls,
+                dir.path(),
+                Instant::now(),
+                4,
+                Duration::ZERO,
+                &token
+            )
+            .await
+            .is_err()
+        );
 
         let (server, _) = range_server(206).await;
-        let (f, backend) = finder(FakeBackend { info: Some(info(&server.url)), ..Default::default() });
+        let (f, backend) = finder(FakeBackend {
+            info: Some(info(&server.url)),
+            ..Default::default()
+        });
         token.cancel();
-        let cand = Candidate { source: "youtube".into(), url: "u".into(), ..Default::default() };
-        let err = f.download(&cand, &dir.path().join("job"), Duration::from_secs(30), &token).await.unwrap_err();
+        let cand = Candidate {
+            source: "youtube".into(),
+            url: "u".into(),
+            ..Default::default()
+        };
+        let err = f
+            .download(
+                &cand,
+                &dir.path().join("job"),
+                Duration::from_secs(30),
+                &token,
+            )
+            .await
+            .unwrap_err();
         assert_eq!(err, SourceError::Cancelled);
         assert!(backend.downloads.lock().is_empty(), "yt-dlp must not run");
     }
 
     #[test]
     fn parses_a_real_youtube_music_songs_page() {
-        let raw: Value = serde_json::from_str(include_str!("../tests/fixtures/ytmusic_songs.json")).unwrap();
+        let raw: Value =
+            serde_json::from_str(include_str!("../tests/fixtures/ytmusic_songs.json")).unwrap();
         let (rows, token) = parse_search(&raw, "song");
         assert!(token.is_some());
         assert!(rows.len() >= 10);
         let first = &rows[0];
         assert_eq!(first.video_id, "4D7u5KF7SP8");
-        assert_eq!(first.title, "Get Lucky (feat. Pharrell Williams and Nile Rodgers)");
-        assert_eq!(first.artists, ["Daft Punk", "Pharrell Williams", "Nile Rodgers"]);
+        assert_eq!(
+            first.title,
+            "Get Lucky (feat. Pharrell Williams and Nile Rodgers)"
+        );
+        assert_eq!(
+            first.artists,
+            ["Daft Punk", "Pharrell Williams", "Nile Rodgers"]
+        );
         assert_eq!(first.album.as_deref(), Some("Random Access Memories"));
         assert_eq!(first.duration, Some(370.0));
         assert!(!first.explicit);
@@ -896,25 +1449,36 @@ pub mod tests {
 
     #[tokio::test]
     async fn innertube_search_posts_the_songs_filter() {
-        let raw: Value = serde_json::from_str(include_str!("../tests/fixtures/ytmusic_songs.json")).unwrap();
+        let raw: Value =
+            serde_json::from_str(include_str!("../tests/fixtures/ytmusic_songs.json")).unwrap();
         let seen = Arc::new(Mutex::new(Vec::<Value>::new()));
         let s = seen.clone();
         let router = axum::Router::new()
-            .route("/", axum::routing::get(|| async { r#"<script>ytcfg.set({"VISITOR_DATA":"Cgt4eXo%3D"});</script>"# }))
+            .route(
+                "/",
+                axum::routing::get(|| async {
+                    r#"<script>ytcfg.set({"VISITOR_DATA":"Cgt4eXo%3D"});</script>"#
+                }),
+            )
             .route(
                 "/youtubei/v1/search",
-                axum::routing::post(move |headers: axum::http::HeaderMap, axum::Json(body): axum::Json<Value>| {
-                    let (s, raw) = (s.clone(), raw.clone());
-                    async move {
-                        assert_eq!(headers["x-goog-visitor-id"], "Cgt4eXo%3D");
-                        s.lock().push(body);
-                        axum::Json(raw)
-                    }
-                }),
+                axum::routing::post(
+                    move |headers: axum::http::HeaderMap, axum::Json(body): axum::Json<Value>| {
+                        let (s, raw) = (s.clone(), raw.clone());
+                        async move {
+                            assert_eq!(headers["x-goog-visitor-id"], "Cgt4eXo%3D");
+                            s.lock().push(body);
+                            axum::Json(raw)
+                        }
+                    },
+                ),
             );
         let server = serve(router).await;
         let backend = YtBackend::new(&server.url, "yt-dlp", vec![]);
-        let rows = backend.ytmusic_search("Daft Punk Get Lucky".into(), Some("songs"), 5).await.unwrap();
+        let rows = backend
+            .ytmusic_search("Daft Punk Get Lucky".into(), Some("songs"), 5)
+            .await
+            .unwrap();
         assert_eq!(rows.len(), 5);
         let body = &seen.lock()[0];
         assert_eq!(body["params"], "EgWKAQIIAWoMEA4QChADEAQQCRAF");
@@ -935,13 +1499,35 @@ pub mod tests {
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         let mut backend = YtBackend::new("http://unused", script.to_str().unwrap(), vec![]);
         backend.fast_client = Some("visionos".into());
-        let calls = || std::fs::read_to_string(&log).unwrap_or_default().lines().count();
-        assert_eq!(backend.resolve("u".into(), YOUTUBE_FORMAT).await.unwrap()["url"], "default");
-        assert_eq!(calls(), 2, "fast client failed: one more call with defaults");
+        let calls = || {
+            std::fs::read_to_string(&log)
+                .unwrap_or_default()
+                .lines()
+                .count()
+        };
+        assert_eq!(
+            backend.resolve("u".into(), YOUTUBE_FORMAT).await.unwrap()["url"],
+            "default"
+        );
+        assert_eq!(
+            calls(),
+            2,
+            "fast client failed: one more call with defaults"
+        );
         std::fs::write(dir.path().join("fast-ok"), "").unwrap();
-        assert_eq!(backend.resolve("u".into(), YOUTUBE_FORMAT).await.unwrap()["url"], "fast");
+        assert_eq!(
+            backend.resolve("u".into(), YOUTUBE_FORMAT).await.unwrap()["url"],
+            "fast"
+        );
         assert_eq!(calls(), 3);
-        backend.ytdlp_args = vec!["--extractor-args".into(), "youtube:player_client=ios".into()];
-        assert_eq!(backend.resolve("u".into(), YOUTUBE_FORMAT).await.unwrap()["url"], "default", "an operator's choice wins");
+        backend.ytdlp_args = vec![
+            "--extractor-args".into(),
+            "youtube:player_client=ios".into(),
+        ];
+        assert_eq!(
+            backend.resolve("u".into(), YOUTUBE_FORMAT).await.unwrap()["url"],
+            "default",
+            "an operator's choice wins"
+        );
     }
 }

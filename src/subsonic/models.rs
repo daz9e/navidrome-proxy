@@ -36,19 +36,28 @@ fn format_utc(dt: OffsetDateTime) -> String {
 
 fn parse_iso(text: &str) -> Option<OffsetDateTime> {
     let text = text.trim().replace('Z', "+00:00").replacen(' ', "T", 1);
-    if let Ok(dt) = OffsetDateTime::parse(&text, &time::format_description::well_known::Iso8601::DEFAULT) {
+    if let Ok(dt) = OffsetDateTime::parse(
+        &text,
+        &time::format_description::well_known::Iso8601::DEFAULT,
+    ) {
         return Some(dt);
     }
     let naive = text.split('.').next().unwrap_or(&text);
-    if let Ok(dt) = PrimitiveDateTime::parse(naive, format_description!("[year]-[month]-[day]T[hour]:[minute]:[second]")) {
+    if let Ok(dt) = PrimitiveDateTime::parse(
+        naive,
+        format_description!("[year]-[month]-[day]T[hour]:[minute]:[second]"),
+    ) {
         return Some(dt.assume_utc());
     }
-    Date::parse(&text, format_description!("[year]-[month]-[day]")).ok().map(|d| d.midnight().assume_utc())
+    Date::parse(&text, format_description!("[year]-[month]-[day]"))
+        .ok()
+        .map(|d| d.midnight().assume_utc())
 }
 
 /// Navidrome's timestamp format from a unix time; never empty.
 pub fn iso_ts(ts: f64) -> String {
-    let dt = OffsetDateTime::from_unix_timestamp_nanos((ts * 1e9) as i128).unwrap_or_else(|_| OffsetDateTime::now_utc());
+    let dt = OffsetDateTime::from_unix_timestamp_nanos((ts * 1e9) as i128)
+        .unwrap_or_else(|_| OffsetDateTime::now_utc());
     format_utc(dt)
 }
 
@@ -68,7 +77,9 @@ pub fn iso(value: Option<&Value>) -> String {
 /// OpenSubsonic ItemDate: only the known parts, like Navidrome.
 pub fn item_date(date: &str) -> Json {
     let mut out = Json::new();
-    let parts = date.split('-').filter(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()));
+    let parts = date
+        .split('-')
+        .filter(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()));
     for (key, part) in ["year", "month", "day"].into_iter().zip(parts) {
         if let Ok(n) = part.parse::<i64>()
             && n != 0
@@ -88,9 +99,19 @@ fn artist_refs(names: &[String], artist_id: &str) -> Vec<Value> {
 }
 
 /// A virtual song (`Child`) for `deezer:`, `yt:` and `sc:` tracks.
-pub fn song(track_id: &str, meta: &Json, audio: &Json, created: Option<&Value>, starred: Option<f64>) -> Json {
-    let album_id = opt_str(meta.get("album_id")).map(ids::album).unwrap_or_default();
-    let artist_id = opt_str(meta.get("artist_id")).map(ids::artist).unwrap_or_default();
+pub fn song(
+    track_id: &str,
+    meta: &Json,
+    audio: &Json,
+    created: Option<&Value>,
+    starred: Option<f64>,
+) -> Json {
+    let album_id = opt_str(meta.get("album_id"))
+        .map(ids::album)
+        .unwrap_or_default();
+    let artist_id = opt_str(meta.get("artist_id"))
+        .map(ids::artist)
+        .unwrap_or_default();
     let mut names: Vec<String> = match meta.get("artists") {
         Some(Value::Array(a)) if !a.is_empty() => a.iter().map(|v| as_str(Some(v))).collect(),
         _ => vec![as_str(meta.get("artist"))],
@@ -103,8 +124,14 @@ pub fn song(track_id: &str, meta: &Json, audio: &Json, created: Option<&Value>, 
     let album_artist = opt_str(meta.get("album_artist")).unwrap_or_else(|| names[0].clone());
     let suffix = opt_str(audio.get("suffix")).unwrap_or_else(|| "m4a".into());
     let youtube = ids::parse(track_id).is_some_and(|v| v.kind == ids::Kind::Youtube);
-    let cover = if youtube || album_id.is_empty() { track_id.to_string() } else { album_id.clone() };
-    let duration = as_f64(audio.get("duration")).filter(|d| *d != 0.0).or_else(|| as_f64(meta.get("duration")));
+    let cover = if youtube || album_id.is_empty() {
+        track_id.to_string()
+    } else {
+        album_id.clone()
+    };
+    let duration = as_f64(audio.get("duration"))
+        .filter(|d| *d != 0.0)
+        .or_else(|| as_f64(meta.get("duration")));
     let title = as_str(meta.get("title"));
     let genre = as_str(meta.get("genre"));
     let isrc = opt_str(meta.get("isrc"));
@@ -167,7 +194,9 @@ pub fn song(track_id: &str, meta: &Json, audio: &Json, created: Option<&Value>, 
 pub fn album(album_id: &str, data: &Json, songs: Option<Vec<Value>>, starred: Option<f64>) -> Json {
     let artist = obj(data.get("artist"));
     let artist_name = as_str(artist.get("name"));
-    let artist_id = opt_str(artist.get("id")).map(ids::artist).unwrap_or_default();
+    let artist_id = opt_str(artist.get("id"))
+        .map(ids::artist)
+        .unwrap_or_default();
     let name = as_str(data.get("title"));
     let release = as_str(data.get("release_date"));
     let genres: Vec<String> = arr(obj(data.get("genres")).get("data"))
@@ -220,7 +249,12 @@ pub fn album(album_id: &str, data: &Json, songs: Option<Vec<Value>>, starred: Op
 }
 
 /// A virtual artist (`ArtistID3`) from a Deezer artist object.
-pub fn artist(artist_id: &str, data: &Json, albums: Option<Vec<Value>>, starred: Option<f64>) -> Json {
+pub fn artist(
+    artist_id: &str,
+    data: &Json,
+    albums: Option<Vec<Value>>,
+    starred: Option<f64>,
+) -> Json {
     let name = as_str(data.get("name"));
     let image = opt_str(data.get("picture_xl"))
         .or_else(|| opt_str(data.get("picture_big")))
@@ -267,7 +301,11 @@ mod tests {
             Value::Array(_) => "array",
             Value::Object(_) => "object",
         };
-        v.as_object().unwrap().iter().map(|(k, x)| (k.clone(), kind(x))).collect()
+        v.as_object()
+            .unwrap()
+            .iter()
+            .map(|(k, x)| (k.clone(), kind(x)))
+            .collect()
     }
 
     fn meta() -> Json {
@@ -283,7 +321,13 @@ mod tests {
     fn song_has_navidrome_key_set_and_types() {
         let fx = fixture();
         let real = &fx["song"];
-        let ours = Value::Object(song("deezer:1", &meta(), &Json::new(), Some(&json!(1700000000.0)), Some(1700000001.0)));
+        let ours = Value::Object(song(
+            "deezer:1",
+            &meta(),
+            &Json::new(),
+            Some(&json!(1700000000.0)),
+            Some(1700000001.0),
+        ));
         let missing: Vec<_> = keys(real).difference(&keys(&ours)).cloned().collect();
         assert!(missing.is_empty(), "missing keys {missing:?}");
         let ours_types: std::collections::HashMap<_, _> = types(&ours).into_iter().collect();
@@ -296,7 +340,10 @@ mod tests {
         assert_eq!(ours["duration"], 182);
         assert_eq!(ours["explicitStatus"], "explicit");
         assert_eq!(ours["created"], "2023-11-14T22:13:20Z");
-        assert_eq!(ours["artists"], json!([{"id": "deezer-artist:3", "name": "A"}, {"id": "", "name": "B"}]));
+        assert_eq!(
+            ours["artists"],
+            json!([{"id": "deezer-artist:3", "name": "A"}, {"id": "", "name": "B"}])
+        );
     }
 
     #[test]
@@ -311,13 +358,26 @@ mod tests {
         let fx = fixture();
         let data = json!({"id": 9, "title": "Alb", "artist": {"id": 3, "name": "A"}, "release_date": "2020-05-00",
                           "genres": {"data": [{"name": "Pop"}]}, "record_type": "album", "nb_tracks": 3, "label": "L"});
-        let a = Value::Object(album("deezer-album:9", data.as_object().unwrap(), Some(vec![]), None));
+        let a = Value::Object(album(
+            "deezer-album:9",
+            data.as_object().unwrap(),
+            Some(vec![]),
+            None,
+        ));
         let missing: Vec<_> = keys(&fx["album"]).difference(&keys(&a)).cloned().collect();
         assert!(missing.is_empty(), "missing album keys {missing:?}");
         assert_eq!(a["releaseDate"], json!({"year": 2020, "month": 5}));
         assert_eq!(a["year"], 2020);
-        let ar = Value::Object(artist("deezer-artist:3", json!({"name": "A", "nb_album": 4}).as_object().unwrap(), None, None));
-        let missing: Vec<_> = keys(&fx["artist"]).difference(&keys(&ar)).cloned().collect();
+        let ar = Value::Object(artist(
+            "deezer-artist:3",
+            json!({"name": "A", "nb_album": 4}).as_object().unwrap(),
+            None,
+            None,
+        ));
+        let missing: Vec<_> = keys(&fx["artist"])
+            .difference(&keys(&ar))
+            .cloned()
+            .collect();
         assert!(missing.is_empty(), "missing artist keys {missing:?}");
         assert_eq!(ar["albumCount"], 4);
     }
@@ -325,8 +385,14 @@ mod tests {
     #[test]
     fn iso_formats() {
         assert_eq!(iso(Some(&json!("2020-01-02"))), "2020-01-02T00:00:00Z");
-        assert_eq!(iso(Some(&json!("2020-01-02T03:04:05+02:00"))), "2020-01-02T01:04:05Z");
-        assert_eq!(iso(Some(&json!("2020-01-02 03:04:05"))), "2020-01-02T03:04:05Z");
+        assert_eq!(
+            iso(Some(&json!("2020-01-02T03:04:05+02:00"))),
+            "2020-01-02T01:04:05Z"
+        );
+        assert_eq!(
+            iso(Some(&json!("2020-01-02 03:04:05"))),
+            "2020-01-02T03:04:05Z"
+        );
         assert_eq!(iso(Some(&json!(0))), "1970-01-01T00:00:00Z");
         assert_eq!(iso(None).len(), 20);
     }

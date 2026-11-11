@@ -64,7 +64,8 @@ impl RateLimiter {
             let wait = {
                 let mut state = self.state.lock();
                 let now = Instant::now();
-                state.0 = (state.0 + now.duration_since(state.1).as_secs_f64() * self.per_second).min(self.capacity);
+                state.0 = (state.0 + now.duration_since(state.1).as_secs_f64() * self.per_second)
+                    .min(self.capacity);
                 state.1 = now;
                 if state.0 >= needed {
                     state.0 -= 1.0;
@@ -87,7 +88,12 @@ pub struct Lru {
 
 impl Lru {
     pub fn new(size: usize) -> Self {
-        Self { size, seq: 0, data: HashMap::new(), order: BTreeMap::new() }
+        Self {
+            size,
+            seq: 0,
+            data: HashMap::new(),
+            order: BTreeMap::new(),
+        }
     }
 
     pub fn get(&mut self, key: &str) -> Option<Value> {
@@ -99,7 +105,8 @@ impl Lru {
         }
         self.seq += 1;
         self.order.insert(self.seq, key.to_string());
-        self.data.insert(key.to_string(), (expires, value.clone(), self.seq));
+        self.data
+            .insert(key.to_string(), (expires, value.clone(), self.seq));
         Some(value)
     }
 
@@ -109,17 +116,27 @@ impl Lru {
         }
         self.seq += 1;
         self.order.insert(self.seq, key.to_string());
-        self.data.insert(key.to_string(), (Instant::now() + Duration::from_secs_f64(ttl.max(0.0)), value, self.seq));
+        self.data.insert(
+            key.to_string(),
+            (
+                Instant::now() + Duration::from_secs_f64(ttl.max(0.0)),
+                value,
+                self.seq,
+            ),
+        );
         while self.data.len() > self.size {
-            let Some((_, oldest)) = self.order.pop_first() else { break };
+            let Some((_, oldest)) = self.order.pop_first() else {
+                break;
+            };
             self.data.remove(&oldest);
         }
     }
 }
 
 pub fn cover_url(md5: &str, size: u32, kind: &str) -> Option<String> {
-    (!md5.is_empty())
-        .then(|| format!("https://cdn-images.dzcdn.net/images/{kind}/{md5}/{size}x{size}-000000-80-0-0.jpg"))
+    (!md5.is_empty()).then(|| {
+        format!("https://cdn-images.dzcdn.net/images/{kind}/{md5}/{size}x{size}-000000-80-0-0.jpg")
+    })
 }
 
 pub fn best_cover(item: &Json) -> Option<String> {
@@ -133,13 +150,19 @@ pub fn best_cover(item: &Json) -> Option<String> {
 /// All performers in credit order: main artist first, then contributors.
 pub fn artist_names(track: &Json) -> Vec<String> {
     let mut names: Vec<String> = Vec::new();
-    let primary = as_str(obj(track.get("artist")).get("name")).trim().to_string();
+    let primary = as_str(obj(track.get("artist")).get("name"))
+        .trim()
+        .to_string();
     if !primary.is_empty() {
         names.push(primary);
     }
     for contributor in arr(track.get("contributors")) {
         let name = as_str(contributor.get("name")).trim().to_string();
-        if !name.is_empty() && !names.iter().any(|n| n.to_lowercase() == name.to_lowercase()) {
+        if !name.is_empty()
+            && !names
+                .iter()
+                .any(|n| n.to_lowercase() == name.to_lowercase())
+        {
             names.push(name);
         }
     }
@@ -147,7 +170,11 @@ pub fn artist_names(track: &Json) -> Vec<String> {
 }
 
 pub fn year_of(date: &str) -> i64 {
-    date.chars().take(4).collect::<String>().parse().unwrap_or(0)
+    date.chars()
+        .take(4)
+        .collect::<String>()
+        .parse()
+        .unwrap_or(0)
 }
 
 fn non_zero(n: i64) -> Value {
@@ -155,7 +182,11 @@ fn non_zero(n: i64) -> Value {
 }
 
 fn non_empty(s: String) -> Value {
-    if s.is_empty() { Value::Null } else { Value::String(s) }
+    if s.is_empty() {
+        Value::Null
+    } else {
+        Value::String(s)
+    }
 }
 
 /// Normalize a Deezer track (search row or full object) into proxy metadata.
@@ -165,11 +196,15 @@ pub fn track_meta(track: &Json, album: Option<&Json>) -> Json {
     let mut album_obj = obj(track.get("album"));
     album_obj.extend(album.clone());
     let artists = artist_names(track);
-    let genres: Vec<String> =
-        arr(obj(album.get("genres")).get("data")).iter().filter_map(|g| opt_str(g.get("name"))).collect();
+    let genres: Vec<String> = arr(obj(album.get("genres")).get("data"))
+        .iter()
+        .filter_map(|g| opt_str(g.get("name")))
+        .collect();
     let album_artist = opt_str(obj(album.get("artist")).get("name"))
         .unwrap_or_else(|| artists.first().cloned().unwrap_or_default());
-    let release = opt_str(album_obj.get("release_date")).or_else(|| opt_str(track.get("release_date"))).unwrap_or_default();
+    let release = opt_str(album_obj.get("release_date"))
+        .or_else(|| opt_str(track.get("release_date")))
+        .unwrap_or_default();
     let year = year_of(&release);
     let mut meta = json!({
         "source": "deezer",
@@ -201,7 +236,10 @@ pub fn track_meta(track: &Json, album: Option<&Json>) -> Json {
 }
 
 fn data_list(v: &Value) -> Vec<Json> {
-    arr(v.get("data")).into_iter().filter_map(|x| x.as_object().cloned()).collect()
+    arr(v.get("data"))
+        .into_iter()
+        .filter_map(|x| x.as_object().cloned())
+        .collect()
 }
 
 pub fn quote(query: &str) -> String {
@@ -345,9 +383,22 @@ impl Deezer {
     }
 
     // --------------------------------------------------------------- search
-    pub async fn search_tracks(&self, query: &str, limit: usize, index: usize) -> Result<Vec<Json>> {
-        let data =
-            self.get(&format!("search/track?q={}&limit={limit}&index={index}", quote(query)), self.search_ttl, false).await?;
+    pub async fn search_tracks(
+        &self,
+        query: &str,
+        limit: usize,
+        index: usize,
+    ) -> Result<Vec<Json>> {
+        let data = self
+            .get(
+                &format!(
+                    "search/track?q={}&limit={limit}&index={index}",
+                    quote(query)
+                ),
+                self.search_ttl,
+                false,
+            )
+            .await?;
         Ok(data_list(&data)
             .into_iter()
             .filter(|x| {
@@ -358,49 +409,85 @@ impl Deezer {
     }
 
     pub async fn search_albums(&self, query: &str, limit: usize) -> Result<Vec<Json>> {
-        let data = self.get(&format!("search/album?q={}&limit={limit}", quote(query)), self.search_ttl, false).await?;
+        let data = self
+            .get(
+                &format!("search/album?q={}&limit={limit}", quote(query)),
+                self.search_ttl,
+                false,
+            )
+            .await?;
         Ok(data_list(&data))
     }
 
     pub async fn search_artists(&self, query: &str, limit: usize) -> Result<Vec<Json>> {
-        let data = self.get(&format!("search/artist?q={}&limit={limit}", quote(query)), self.search_ttl, false).await?;
+        let data = self
+            .get(
+                &format!("search/artist?q={}&limit={limit}", quote(query)),
+                self.search_ttl,
+                false,
+            )
+            .await?;
         Ok(data_list(&data))
     }
 
     // ---------------------------------------------------------------- lookup
     pub async fn track(&self, id: &str) -> Result<Json> {
-        Ok(obj(Some(&self.get(&format!("track/{id}"), 7.0 * DAY, true).await?)))
+        Ok(obj(Some(
+            &self.get(&format!("track/{id}"), 7.0 * DAY, true).await?,
+        )))
     }
 
     pub async fn album(&self, id: &str) -> Result<Json> {
-        Ok(obj(Some(&self.get(&format!("album/{id}"), 7.0 * DAY, true).await?)))
+        Ok(obj(Some(
+            &self.get(&format!("album/{id}"), 7.0 * DAY, true).await?,
+        )))
     }
 
     pub async fn album_tracks(&self, id: &str) -> Result<Vec<Json>> {
-        Ok(data_list(&self.get(&format!("album/{id}/tracks?limit=500"), 7.0 * DAY, true).await?))
+        Ok(data_list(
+            &self
+                .get(&format!("album/{id}/tracks?limit=500"), 7.0 * DAY, true)
+                .await?,
+        ))
     }
 
     /// Album tracks only if already cached; never hits the network.
     pub fn cached_album_tracks(&self, id: &str) -> Option<Vec<Json>> {
         let key = format!("deezer:album/{id}/tracks?limit=500");
-        let data = self.memory.lock().get(&key).or_else(|| self.store.cache_get(&key))?;
+        let data = self
+            .memory
+            .lock()
+            .get(&key)
+            .or_else(|| self.store.cache_get(&key))?;
         Some(data_list(&data))
     }
 
     pub fn cached_album(&self, id: &str) -> Option<Json> {
         let key = format!("deezer:album/{id}");
-        let data = self.memory.lock().get(&key).or_else(|| self.store.cache_get(&key))?;
+        let data = self
+            .memory
+            .lock()
+            .get(&key)
+            .or_else(|| self.store.cache_get(&key))?;
         data.as_object().cloned()
     }
 
     pub async fn artist(&self, id: &str) -> Result<Json> {
-        Ok(obj(Some(&self.get(&format!("artist/{id}"), DAY, true).await?)))
+        Ok(obj(Some(
+            &self.get(&format!("artist/{id}"), DAY, true).await?,
+        )))
     }
 
     pub async fn artist_albums(&self, id: &str) -> Result<Vec<Json>> {
         let mut out = Vec::new();
         for index in (0..500).step_by(100) {
-            let data = self.get(&format!("artist/{id}/albums?limit=100&index={index}"), DAY, true).await?;
+            let data = self
+                .get(
+                    &format!("artist/{id}/albums?limit=100&index={index}"),
+                    DAY,
+                    true,
+                )
+                .await?;
             let page = data_list(&data);
             let done = page.len() < 100 || !truthy(data.get("next"));
             out.extend(page);
@@ -412,11 +499,19 @@ impl Deezer {
     }
 
     pub async fn artist_top(&self, id: &str, limit: usize) -> Result<Vec<Json>> {
-        Ok(data_list(&self.get(&format!("artist/{id}/top?limit={limit}"), DAY, true).await?))
+        Ok(data_list(
+            &self
+                .get(&format!("artist/{id}/top?limit={limit}"), DAY, true)
+                .await?,
+        ))
     }
 
     pub async fn artist_related(&self, id: &str, limit: usize) -> Result<Vec<Json>> {
-        Ok(data_list(&self.get(&format!("artist/{id}/related?limit={limit}"), DAY, true).await?))
+        Ok(data_list(
+            &self
+                .get(&format!("artist/{id}/related?limit={limit}"), DAY, true)
+                .await?,
+        ))
     }
 
     /// Complete metadata: full track (contributors, ISRC) plus its album (genre, totals).
@@ -441,17 +536,40 @@ pub mod tests {
 
     #[test]
     fn track_meta_keeps_every_contributor() {
-        let t = dz_track(1, "Hella Quality", "TVETH", 100, "RAW", 1, &["TVETH", "Bato"]);
+        let t = dz_track(
+            1,
+            "Hella Quality",
+            "TVETH",
+            100,
+            "RAW",
+            1,
+            &["TVETH", "Bato"],
+        );
         let album = json!({"nb_tracks": 12, "genres": {"data": [{"name": "Rap"}]}, "artist": {"name": "TVETH"}});
         let meta = track_meta(&t, album.as_object());
         assert_eq!(meta["artists"], json!(["TVETH", "Bato"]));
         assert_eq!(meta["artist"], "TVETH, Bato");
         assert_eq!(meta["album_artist"], "TVETH");
-        assert_eq!((meta["year"].clone(), meta["genre"].clone(), meta["track_total"].clone()), (json!(2020), json!("Rap"), json!(12)));
-        assert!(meta["cover"].as_str().unwrap().ends_with("/md5100/1000x1000-000000-80-0-0.jpg"));
+        assert_eq!(
+            (
+                meta["year"].clone(),
+                meta["genre"].clone(),
+                meta["track_total"].clone()
+            ),
+            (json!(2020), json!("Rap"), json!(12))
+        );
+        assert!(
+            meta["cover"]
+                .as_str()
+                .unwrap()
+                .ends_with("/md5100/1000x1000-000000-80-0-0.jpg")
+        );
         assert_eq!(meta["full"], true);
         assert_eq!(meta["album_id"], "100");
-        assert_eq!(track_meta(&dz_track(1, "x", "y", 100, "RAW", 1, &[]), None)["full"], false);
+        assert_eq!(
+            track_meta(&dz_track(1, "x", "y", 100, "RAW", 1, &[]), None)["full"],
+            false
+        );
     }
 
     async fn client(fake: &FakeDeezer) -> (Deezer, crate::testutil::Server) {
@@ -467,7 +585,10 @@ pub mod tests {
         let fake = FakeDeezer::default();
         let (dz, _s) = client(&fake).await;
         let rows = dz.search_tracks("hella quality", 25, 0).await.unwrap();
-        assert_eq!(rows.iter().map(|r| r["id"].clone()).collect::<Vec<_>>(), vec![json!(4250555171u64)]);
+        assert_eq!(
+            rows.iter().map(|r| r["id"].clone()).collect::<Vec<_>>(),
+            vec![json!(4250555171u64)]
+        );
         let meta = dz.full_track_meta("4250555171").await.unwrap();
         assert_eq!(meta["artists"], json!(["TVETH", "Bato"]));
         assert_eq!(meta["genre"], "Rap");
@@ -478,7 +599,12 @@ pub mod tests {
         let fake = FakeDeezer::default();
         let (dz, _s) = client(&fake).await;
         let dz = Arc::new(dz);
-        let calls: Vec<_> = (0..5).map(|_| { let d = dz.clone(); tokio::spawn(async move { d.album("100").await }) }).collect();
+        let calls: Vec<_> = (0..5)
+            .map(|_| {
+                let d = dz.clone();
+                tokio::spawn(async move { d.album("100").await })
+            })
+            .collect();
         for c in calls {
             c.await.unwrap().unwrap();
         }
@@ -488,7 +614,12 @@ pub mod tests {
         assert_eq!(fake.hits("/album/100"), 1, "served from SQLite");
         assert!(dz.cached_album_tracks("100").is_none());
         dz.album_tracks("100").await.unwrap();
-        let ids: Vec<_> = dz.cached_album_tracks("100").unwrap().iter().map(|t| t["id"].clone()).collect();
+        let ids: Vec<_> = dz
+            .cached_album_tracks("100")
+            .unwrap()
+            .iter()
+            .map(|t| t["id"].clone())
+            .collect();
         assert_eq!(ids, vec![json!(4250555171u64), json!(2)]);
     }
 
@@ -523,7 +654,9 @@ pub mod tests {
             });
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
-        tokio::time::timeout(Duration::from_millis(1), limiter.acquire(false)).await.expect("served from the reserve");
+        tokio::time::timeout(Duration::from_millis(1), limiter.acquire(false))
+            .await
+            .expect("served from the reserve");
         order.lock().push("fg".into());
         let order = order.lock().clone();
         assert_eq!(&order[..2], ["bg0", "bg1"]);

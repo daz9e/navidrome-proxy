@@ -33,7 +33,12 @@ pub enum RunError {
 }
 
 /// Run `program args...`, killing it when `timeout` passes or `cancel` fires.
-pub async fn run(program: &str, args: &[String], timeout: Duration, cancel: Option<&CancellationToken>) -> Result<Output, RunError> {
+pub async fn run(
+    program: &str,
+    args: &[String],
+    timeout: Duration,
+    cancel: Option<&CancellationToken>,
+) -> Result<Output, RunError> {
     let child = Command::new(program)
         .args(args)
         .stdin(Stdio::null())
@@ -71,7 +76,9 @@ mod tests {
 
     #[tokio::test]
     async fn missing_tool_is_reported() {
-        let err = run("/nonexistent/tool", &[], Duration::from_secs(1), None).await.unwrap_err();
+        let err = run("/nonexistent/tool", &[], Duration::from_secs(1), None)
+            .await
+            .unwrap_err();
         assert!(matches!(err, RunError::Spawn(..)));
     }
 
@@ -83,7 +90,9 @@ mod tests {
         let me = std::env::current_exe().unwrap().display().to_string();
         let err = run(&me, &args(["--list"]), Duration::from_secs(5), Some(&token)).await;
         assert!(matches!(err, Err(RunError::Cancelled)));
-        let out = run(&me, &args(["--list"]), Duration::from_secs(30), None).await.unwrap();
+        let out = run(&me, &args(["--list"]), Duration::from_secs(30), None)
+            .await
+            .unwrap();
         assert!(out.success());
     }
 }

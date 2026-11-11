@@ -7,7 +7,10 @@ pub type Json = Map<String, Value>;
 
 /// Unix time in seconds, like Python's `time.time()`.
 pub fn now() -> f64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0)
 }
 
 /// Python's `str(value)` for JSON scalars; `None` is "".
@@ -38,7 +41,11 @@ pub fn as_f64(v: Option<&Value>) -> Option<f64> {
 
 /// `max(0, int(float(value)))`, 0 when not a number.
 pub fn as_uint(v: Option<&Value>) -> i64 {
-    as_f64(v).filter(|f| f.is_finite()).map(|f| f.trunc() as i64).unwrap_or(0).max(0)
+    as_f64(v)
+        .filter(|f| f.is_finite())
+        .map(|f| f.trunc() as i64)
+        .unwrap_or(0)
+        .max(0)
 }
 
 /// Python truthiness of a JSON value.

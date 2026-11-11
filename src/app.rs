@@ -11,7 +11,7 @@ use crate::identity::Identity;
 use crate::imports::Importer;
 use crate::intents::Intents;
 use crate::library::{Indexer, Library};
-use crate::navidrome::{Incoming, NdError, Navidrome};
+use crate::navidrome::{Incoming, Navidrome, NdError};
 use crate::pipeline::{Fetcher, Pipeline};
 use crate::reconcile::Reconciler;
 use crate::scheduler::{BACKGROUND, Scheduler};
@@ -65,7 +65,13 @@ pub struct Overrides {
 
 impl Default for Overrides {
     fn default() -> Self {
-        Self { store: None, deezer_url: crate::deezer::API.into(), lyrics_url: crate::lyrics::LRCLIB.into(), backend: None, fetcher: None }
+        Self {
+            store: None,
+            deezer_url: crate::deezer::API.into(),
+            lyrics_url: crate::lyrics::LRCLIB.into(),
+            backend: None,
+            fetcher: None,
+        }
     }
 }
 
@@ -76,10 +82,22 @@ pub fn build_services(settings: Settings, o: Overrides) -> anyhow::Result<Arc<Se
         None => Arc::new(Store::open(&settings.db_path())?),
     };
     let identity = Identity::new(store.clone());
-    let navidrome = Arc::new(Navidrome::new(&settings.navidrome_url, settings.auth_cache_seconds));
-    let deezer = Arc::new(Deezer::new(store.clone(), settings.deezer_requests_per_second, &o.deezer_url, settings.search_cache_seconds));
+    let navidrome = Arc::new(Navidrome::new(
+        &settings.navidrome_url,
+        settings.auth_cache_seconds,
+    ));
+    let deezer = Arc::new(Deezer::new(
+        store.clone(),
+        settings.deezer_requests_per_second,
+        &o.deezer_url,
+        settings.search_cache_seconds,
+    ));
     let backend = o.backend.unwrap_or_else(|| {
-        let mut yt = YtBackend::new(crate::sources::YTMUSIC, &settings.ytdlp_path, settings.ytdlp_args.clone());
+        let mut yt = YtBackend::new(
+            crate::sources::YTMUSIC,
+            &settings.ytdlp_path,
+            settings.ytdlp_args.clone(),
+        );
         yt.fast_client = Some(settings.ytdlp_fast_client.clone()).filter(|c| !c.is_empty());
         Arc::new(yt)
     });
@@ -87,7 +105,12 @@ pub fn build_services(settings: Settings, o: Overrides) -> anyhow::Result<Arc<Se
     let fetcher: Arc<dyn Fetcher> = o.fetcher.unwrap_or_else(|| finder.clone());
     let library = Arc::new(Library::new(&settings.music_dir, settings.staging_dir()));
     let covers = Arc::new(Covers::new(&settings.cache_dir().join("covers")));
-    let intents = Arc::new(Intents::new(store.clone(), identity.clone(), navidrome.clone(), 20.0));
+    let intents = Arc::new(Intents::new(
+        store.clone(),
+        identity.clone(),
+        navidrome.clone(),
+        20.0,
+    ));
     let credentials = {
         let (settings, navidrome) = (settings.clone(), navidrome.clone());
         Arc::new(move || {
@@ -106,11 +129,22 @@ pub fn build_services(settings: Settings, o: Overrides) -> anyhow::Result<Arc<Se
         let intents = intents.clone();
         Arc::new(move |track: Track| {
             let intents = intents.clone();
-            Box::pin(async move { intents.on_track_mapped(track).await }) as futures::future::BoxFuture<'static, ()>
+            Box::pin(async move { intents.on_track_mapped(track).await })
+                as futures::future::BoxFuture<'static, ()>
         })
     };
-    let indexer = Arc::new(Indexer::new(store.clone(), navidrome.clone(), credentials, settings.scan_debounce_seconds, Some(on_mapped)));
-    let tools = Tools { ffmpeg: settings.ffmpeg_path.clone(), ffprobe: settings.ffprobe_path.clone(), fpcalc: settings.fpcalc_path.clone() };
+    let indexer = Arc::new(Indexer::new(
+        store.clone(),
+        navidrome.clone(),
+        credentials,
+        settings.scan_debounce_seconds,
+        Some(on_mapped),
+    ));
+    let tools = Tools {
+        ffmpeg: settings.ffmpeg_path.clone(),
+        ffprobe: settings.ffprobe_path.clone(),
+        fpcalc: settings.fpcalc_path.clone(),
+    };
     let pipeline = Arc::new(Pipeline {
         settings: settings.clone(),
         store: store.clone(),
@@ -124,15 +158,41 @@ pub fn build_services(settings: Settings, o: Overrides) -> anyhow::Result<Arc<Se
         lyrics_url: o.lyrics_url,
         background: Arc::new(Background::default()),
     });
-    let scheduler = Arc::new(Scheduler::new(store.clone(), settings.background_workers, settings.priority_workers));
-    let catalog = Arc::new(Catalog::new(store.clone(), identity.clone(), navidrome.clone()));
-    let importer = Arc::new(Importer::new(store.clone(), identity.clone(), catalog.clone(), deezer.clone(), fetcher, scheduler.clone(), navidrome.clone()));
-    let reconciler = Arc::new(Reconciler::new(store.clone(), identity.clone(), deezer.clone(), 6.0 * 3600.0, 50));
+    let scheduler = Arc::new(Scheduler::new(
+        store.clone(),
+        settings.background_workers,
+        settings.priority_workers,
+    ));
+    let catalog = Arc::new(Catalog::new(
+        store.clone(),
+        identity.clone(),
+        navidrome.clone(),
+    ));
+    let importer = Arc::new(Importer::new(
+        store.clone(),
+        identity.clone(),
+        catalog.clone(),
+        deezer.clone(),
+        fetcher,
+        scheduler.clone(),
+        navidrome.clone(),
+    ));
+    let reconciler = Arc::new(Reconciler::new(
+        store.clone(),
+        identity.clone(),
+        deezer.clone(),
+        6.0 * 3600.0,
+        50,
+    ));
     let upgrader = (settings.slskd_enabled() && settings.slskd_upgrades).then(|| {
         Arc::new(Upgrader {
             store: store.clone(),
             library: library.clone(),
-            client: Arc::new(Slskd::new(&settings.slskd_url, &settings.slskd_api_key, &settings.slskd_downloads_dir)),
+            client: Arc::new(Slskd::new(
+                &settings.slskd_url,
+                &settings.slskd_api_key,
+                &settings.slskd_downloads_dir,
+            )),
             min_peers: settings.slskd_min_peers,
             covers: Some(covers.clone()),
             tools,
@@ -181,11 +241,16 @@ fn wire_jobs(s: &Services) {
     s.scheduler.add_done_hook(Arc::new(move |job, track| {
         let scheduler = scheduler.clone();
         Box::pin(async move {
-            let Some(scheduler) = scheduler.upgrade() else { return };
+            let Some(scheduler) = scheduler.upgrade() else {
+                return;
+            };
             let reason = job.reason.unwrap_or_default();
             // A like, a playlist add or an album like that pinned this track asks for
             // the best available quality: queue a background source upgrade.
-            if job.kind == "download" && (reason.starts_with("like") || reason.starts_with("playlist")) && scheduler.has_handler("upgrade") {
+            if job.kind == "download"
+                && (reason.starts_with("like") || reason.starts_with("playlist"))
+                && scheduler.has_handler("upgrade")
+            {
                 scheduler.request(&track.id, BACKGROUND, "upgrade", "upgrade", false);
             }
         })
@@ -195,7 +260,11 @@ fn wire_jobs(s: &Services) {
 pub async fn startup(s: &Arc<Services>) -> anyhow::Result<()> {
     let problems = s.store.integrity(true);
     if !problems.is_empty() {
-        anyhow::bail!("state database {} is corrupt: {:?}", s.settings.db_path().display(), &problems[..problems.len().min(3)]);
+        anyhow::bail!(
+            "state database {} is corrupt: {:?}",
+            s.settings.db_path().display(),
+            &problems[..problems.len().min(3)]
+        );
     }
     s.navidrome.refresh_identity().await;
     let removed = s.library.cleanup_staging(6.0 * 3600.0);
@@ -218,9 +287,16 @@ pub async fn startup(s: &Arc<Services>) -> anyhow::Result<()> {
 /// A verified copy right after start, then every `backup_hours`.
 async fn backups(s: &Services) {
     loop {
-        let (store, dir, keep) = (s.store.clone(), s.settings.backup_dir(), s.settings.backup_keep);
+        let (store, dir, keep) = (
+            s.store.clone(),
+            s.settings.backup_dir(),
+            s.settings.backup_keep,
+        );
         match tokio::task::spawn_blocking(move || store.backup(&dir, keep)).await {
-            Ok(Ok(Some(dest))) => tracing::info!("state database backed up to {}", dest.file_name().and_then(|n| n.to_str()).unwrap_or("")),
+            Ok(Ok(Some(dest))) => tracing::info!(
+                "state database backed up to {}",
+                dest.file_name().and_then(|n| n.to_str()).unwrap_or("")
+            ),
             Ok(Ok(None)) => tracing::error!("state database failed its check; backup skipped"),
             Ok(Err(e)) => tracing::error!("state database backup failed: {e}"),
             Err(e) => tracing::error!("state database backup failed: {e}"),
@@ -235,7 +311,11 @@ pub async fn shutdown(s: &Arc<Services>) {
     }
     s.importer.stop().await;
     s.reconciler.stop().await;
-    for background in [&*s.background, &s.intents.background, &*s.pipeline.background] {
+    for background in [
+        &*s.background,
+        &s.intents.background,
+        &*s.pipeline.background,
+    ] {
         background.cancel();
     }
     s.scheduler.stop().await;
@@ -249,7 +329,9 @@ fn method_name(tail: &str) -> String {
 }
 
 fn remote(req: &Request) -> Option<std::net::IpAddr> {
-    req.extensions().get::<ConnectInfo<SocketAddr>>().map(|c| c.0.ip())
+    req.extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|c| c.0.ip())
 }
 
 async fn rest(State(s): State<Arc<Services>>, req: Request) -> Response {
@@ -257,15 +339,39 @@ async fn rest(State(s): State<Arc<Services>>, req: Request) -> Response {
     let method = method_name(req.uri().path().trim_start_matches("/rest/"));
     let remote = remote(&req);
     let (parts, body) = req.into_parts();
-    let body = if parts.method == Method::POST { axum::body::to_bytes(body, MAX_BODY).await.unwrap_or_default() } else { Default::default() };
+    let body = if parts.method == Method::POST {
+        axum::body::to_bytes(body, MAX_BODY)
+            .await
+            .unwrap_or_default()
+    } else {
+        Default::default()
+    };
     let is_form = parts
         .headers
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
-        .is_some_and(|c| c.trim().to_lowercase().starts_with("application/x-www-form-urlencoded"));
-    let form = if is_form { String::from_utf8_lossy(&body).into_owned() } else { String::new() };
-    let path_and_query = parts.uri.path_and_query().map(|p| p.as_str().to_string()).unwrap_or_default();
-    let call = Call { method, params: Params::parse(parts.uri.query().unwrap_or(""), &form), http_method: parts.method, headers: parts.headers, remote };
+        .is_some_and(|c| {
+            c.trim()
+                .to_lowercase()
+                .starts_with("application/x-www-form-urlencoded")
+        });
+    let form = if is_form {
+        String::from_utf8_lossy(&body).into_owned()
+    } else {
+        String::new()
+    };
+    let path_and_query = parts
+        .uri
+        .path_and_query()
+        .map(|p| p.as_str().to_string())
+        .unwrap_or_default();
+    let call = Call {
+        method,
+        params: Params::parse(parts.uri.query().unwrap_or(""), &form),
+        http_method: parts.method,
+        headers: parts.headers,
+        remote,
+    };
     let mut handled = Ok(None);
     if api::HANDLED.contains(&call.method.as_str()) {
         let auth = s.navidrome.authenticate(&call.params).await;
@@ -279,8 +385,15 @@ async fn rest(State(s): State<Arc<Services>>, req: Request) -> Response {
     let result = match handled {
         Ok(Some(response)) => Ok(response),
         Ok(None) => {
-            let incoming = Incoming { method: &call.http_method, path_and_query: &path_and_query, headers: &call.headers, remote: call.remote };
-            s.navidrome.passthrough(incoming, reqwest::Body::from(body)).await
+            let incoming = Incoming {
+                method: &call.http_method,
+                path_and_query: &path_and_query,
+                headers: &call.headers,
+                remote: call.remote,
+            };
+            s.navidrome
+                .passthrough(incoming, reqwest::Body::from(body))
+                .await
         }
         Err(e) => Err(e),
     };
@@ -289,7 +402,11 @@ async fn rest(State(s): State<Arc<Services>>, req: Request) -> Response {
         Err(NdError::Unavailable(_)) => call.error(&s, sr::GENERIC, "Navidrome is unavailable"),
         Err(NdError::Upstream { code, message }) => call.error(&s, code, &message),
     };
-    let user = if call.username().is_empty() { "-" } else { call.username() };
+    let user = if call.username().is_empty() {
+        "-"
+    } else {
+        call.username()
+    };
     tracing::info!(
         target: "navidrome_proxy::access",
         "{user} {} {} {} {:.0}ms",
@@ -304,9 +421,25 @@ async fn rest(State(s): State<Arc<Services>>, req: Request) -> Response {
 async fn relay(State(s): State<Arc<Services>>, req: Request) -> Response {
     let remote = remote(&req);
     let (parts, body) = req.into_parts();
-    let path_and_query = parts.uri.path_and_query().map(|p| p.as_str().to_string()).unwrap_or_else(|| "/".into());
-    let incoming = Incoming { method: &parts.method, path_and_query: &path_and_query, headers: &parts.headers, remote };
-    match s.navidrome.passthrough(incoming, reqwest::Body::wrap_stream(body.into_data_stream())).await {
+    let path_and_query = parts
+        .uri
+        .path_and_query()
+        .map(|p| p.as_str().to_string())
+        .unwrap_or_else(|| "/".into());
+    let incoming = Incoming {
+        method: &parts.method,
+        path_and_query: &path_and_query,
+        headers: &parts.headers,
+        remote,
+    };
+    match s
+        .navidrome
+        .passthrough(
+            incoming,
+            reqwest::Body::wrap_stream(body.into_data_stream()),
+        )
+        .await
+    {
         Ok(r) => r,
         Err(_) => (StatusCode::BAD_GATEWAY, "Navidrome is unavailable").into_response(),
     }
@@ -328,7 +461,9 @@ pub async fn serve(settings: Settings) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind((host.as_str(), port)).await?;
     tracing::info!("listening on {host}:{port}");
     let app = router(services.clone()).into_make_service_with_connect_info::<SocketAddr>();
-    let result = axum::serve(listener, app).with_graceful_shutdown(signal()).await;
+    let result = axum::serve(listener, app)
+        .with_graceful_shutdown(signal())
+        .await;
     shutdown(&services).await;
     Ok(result?)
 }
@@ -337,7 +472,8 @@ async fn signal() {
     let ctrl_c = tokio::signal::ctrl_c();
     #[cfg(unix)]
     {
-        let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).expect("SIGTERM handler");
+        let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("SIGTERM handler");
         tokio::select! {
             _ = ctrl_c => {}
             _ = term.recv() => {}

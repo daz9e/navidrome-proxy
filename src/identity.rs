@@ -31,7 +31,9 @@ pub fn recording_key(artists: &[String], title: &str) -> Option<String> {
 /// The artists of a meta dict: its `artists` list, else its `artist` credit split.
 pub fn meta_artist_list(meta: &Json) -> Vec<String> {
     match meta.get("artists") {
-        Some(serde_json::Value::Array(a)) if !a.is_empty() => a.iter().map(|v| as_str(Some(v))).collect(),
+        Some(serde_json::Value::Array(a)) if !a.is_empty() => {
+            a.iter().map(|v| as_str(Some(v))).collect()
+        }
         _ => matching::split_artists(&as_str(meta.get("artist"))),
     }
 }
@@ -63,10 +65,20 @@ impl Identity {
     }
 
     pub fn canonical_many(&self, track_ids: &[String]) -> HashMap<String, String> {
-        let mapping = self.store.resolve_aliases(track_ids.iter().map(String::as_str));
+        let mapping = self
+            .store
+            .resolve_aliases(track_ids.iter().map(String::as_str));
         track_ids
             .iter()
-            .map(|t| (t.clone(), mapping.get(t).map(|m| self.canonical(m)).unwrap_or_else(|| t.clone())))
+            .map(|t| {
+                (
+                    t.clone(),
+                    mapping
+                        .get(t)
+                        .map(|m| self.canonical(m))
+                        .unwrap_or_else(|| t.clone()),
+                )
+            })
             .collect()
     }
 
@@ -82,17 +94,24 @@ impl Identity {
     pub fn register(&self, track: &Track) {
         let isrc = as_str(track.meta.get("isrc"));
         if !isrc.is_empty() {
-            self.store.add_alias(&format!("isrc:{}", isrc.to_uppercase()), &track.id, "isrc");
+            self.store
+                .add_alias(&format!("isrc:{}", isrc.to_uppercase()), &track.id, "isrc");
         }
         // Same artist list as `find_existing` uses, so a credit string keys identically.
         if let Some(key) = recording_key(&meta_artist_list(&track.meta), &track.title()) {
-            let duration = as_f64(track.audio.get("duration")).filter(|d| *d != 0.0).unwrap_or(track.duration());
+            let duration = as_f64(track.audio.get("duration"))
+                .filter(|d| *d != 0.0)
+                .unwrap_or(track.duration());
             self.store.add_recording(&key, &track.id, duration);
         }
         if let Some(source_id) = Self::source_id(track)
             && source_id != track.id
         {
-            self.store.add_alias(&source_id, &track.id, &format!("source:{}", track.source.as_deref().unwrap_or("")));
+            self.store.add_alias(
+                &source_id,
+                &track.id,
+                &format!("source:{}", track.source.as_deref().unwrap_or("")),
+            );
         }
     }
 
@@ -100,7 +119,9 @@ impl Identity {
         let reference = track.source_ref.as_deref().unwrap_or("");
         match track.source.as_deref() {
             Some("youtube") if ids::valid_youtube_id(reference) => Some(ids::youtube(reference)),
-            Some("soundcloud") if !reference.is_empty() && reference.bytes().all(|b| b.is_ascii_digit()) => {
+            Some("soundcloud")
+                if !reference.is_empty() && reference.bytes().all(|b| b.is_ascii_digit()) =>
+            {
                 Some(ids::soundcloud(reference))
             }
             _ => None,
@@ -112,7 +133,9 @@ impl Identity {
         let mut candidates = Vec::new();
         let isrc = as_str(meta.get("isrc"));
         if !isrc.is_empty()
-            && let Some(hit) = self.store.resolve_alias(&format!("isrc:{}", isrc.to_uppercase()))
+            && let Some(hit) = self
+                .store
+                .resolve_alias(&format!("isrc:{}", isrc.to_uppercase()))
         {
             candidates.push(hit);
         }
@@ -155,10 +178,20 @@ mod tests {
 
     fn world() -> World {
         let store = Arc::new(Store::memory());
-        World { identity: Identity::new(store.clone()), store, music: tempfile::tempdir().unwrap() }
+        World {
+            identity: Identity::new(store.clone()),
+            store,
+            music: tempfile::tempdir().unwrap(),
+        }
     }
 
-    fn ready(w: &World, id: &str, meta: serde_json::Value, source: Option<&str>, reference: Option<&str>) -> Track {
+    fn ready(
+        w: &World,
+        id: &str,
+        meta: serde_json::Value,
+        source: Option<&str>,
+        reference: Option<&str>,
+    ) -> Track {
         let f = w.music.path().join(format!("{}.m4a", id.replace(':', "-")));
         std::fs::write(&f, b"x").unwrap();
         let meta = meta.as_object().cloned().unwrap();
@@ -183,9 +216,15 @@ mod tests {
 
     #[test]
     fn recording_key_ignores_feat_brackets_and_collab_order() {
-        assert_eq!(recording_key(&["Юпи".into()], "Порезы на руках").as_deref(), Some("юпи|порезы на руках"));
+        assert_eq!(
+            recording_key(&["Юпи".into()], "Порезы на руках").as_deref(),
+            Some("юпи|порезы на руках")
+        );
         let artists = meta_artist_list(&m(json!({"artist": "TVETH, Bato"})));
-        assert_eq!(recording_key(&artists, "Hella Quality (feat. Bato)").as_deref(), Some("tveth|hella quality"));
+        assert_eq!(
+            recording_key(&artists, "Hella Quality (feat. Bato)").as_deref(),
+            Some("tveth|hella quality")
+        );
         assert_eq!(recording_key(&[], "x"), None);
     }
 
@@ -201,7 +240,10 @@ mod tests {
         );
         w.identity.register(&t);
         assert_eq!(w.identity.canonical("yt:Q1QvyIrUzz0"), "deezer:4274804272");
-        assert_eq!(w.identity.canonical("deezer:4274804272"), "deezer:4274804272");
+        assert_eq!(
+            w.identity.canonical("deezer:4274804272"),
+            "deezer:4274804272"
+        );
     }
 
     #[test]
@@ -220,18 +262,33 @@ mod tests {
             .find_existing(&m(json!({"title": "Порезы на руках (feat. X)", "artists": ["Юпи"], "duration": 124})), None, true)
             .unwrap();
         assert_eq!(found.id, "sc:2398309779");
-        assert!(w
-            .identity
-            .find_existing(&m(json!({"title": "Порезы на руках", "artists": ["Юпи"], "duration": 90})), None, true)
-            .is_none());
+        assert!(
+            w.identity
+                .find_existing(
+                    &m(json!({"title": "Порезы на руках", "artists": ["Юпи"], "duration": 90})),
+                    None,
+                    true
+                )
+                .is_none()
+        );
     }
 
     #[test]
     fn isrc_match_wins_over_titles() {
         let w = world();
-        let t = ready(&w, "deezer:1", json!({"title": "Song", "artists": ["A"], "duration": 200, "isrc": "US1"}), None, None);
+        let t = ready(
+            &w,
+            "deezer:1",
+            json!({"title": "Song", "artists": ["A"], "duration": 200, "isrc": "US1"}),
+            None,
+            None,
+        );
         w.identity.register(&t);
-        let hit = w.identity.find_existing(&m(json!({"title": "Totally Different", "artists": ["B"], "isrc": "us1"})), None, true);
+        let hit = w.identity.find_existing(
+            &m(json!({"title": "Totally Different", "artists": ["B"], "isrc": "us1"})),
+            None,
+            true,
+        );
         assert_eq!(hit.unwrap().id, "deezer:1");
     }
 
@@ -242,7 +299,9 @@ mod tests {
         assert!(w.identity.link("deezer:2", "yt:AAAAAAAAAAA", "reconciler"));
         assert_eq!(w.identity.canonical("deezer:2"), "deezer:1");
         assert!(!w.identity.link("deezer:1", "deezer:2", "cycle"));
-        let many = w.identity.canonical_many(&["deezer:2".into(), "deezer:9".into()]);
+        let many = w
+            .identity
+            .canonical_many(&["deezer:2".into(), "deezer:9".into()]);
         assert_eq!(many["deezer:2"], "deezer:1");
         assert_eq!(many["deezer:9"], "deezer:9");
     }
@@ -250,11 +309,21 @@ mod tests {
     #[test]
     fn not_ready_tracks_are_not_reused() {
         let w = world();
-        w.store.remember_track("deezer:1", &m(json!({"title": "Song", "artists": ["A"], "duration": 200})));
+        w.store.remember_track(
+            "deezer:1",
+            &m(json!({"title": "Song", "artists": ["A"], "duration": 200})),
+        );
         w.store.add_recording("a|song", "deezer:1", 200.0);
         let meta = m(json!({"title": "Song", "artists": ["A"], "duration": 200}));
         assert!(w.identity.find_existing(&meta, None, true).is_none());
-        assert_eq!(w.identity.find_existing(&meta, None, false).unwrap().id, "deezer:1");
-        assert!(w.identity.find_existing(&meta, Some("deezer:1"), false).is_none());
+        assert_eq!(
+            w.identity.find_existing(&meta, None, false).unwrap().id,
+            "deezer:1"
+        );
+        assert!(
+            w.identity
+                .find_existing(&meta, Some("deezer:1"), false)
+                .is_none()
+        );
     }
 }

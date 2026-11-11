@@ -28,7 +28,8 @@ pub const BACKGROUND: i64 = 2;
 pub const BACKOFF: [f64; 5] = [15.0, 60.0, 300.0, 1200.0, 3600.0];
 
 pub type JobResult = Result<Option<Track>, SourceError>;
-pub type Handler = Arc<dyn Fn(Job, CancellationToken) -> BoxFuture<'static, JobResult> + Send + Sync>;
+pub type Handler =
+    Arc<dyn Fn(Job, CancellationToken) -> BoxFuture<'static, JobResult> + Send + Sync>;
 pub type DoneHook = Arc<dyn Fn(Job, Track) -> BoxFuture<'static, ()> + Send + Sync>;
 
 pub struct Scheduler {
@@ -107,15 +108,25 @@ impl Scheduler {
     }
 
     /// Queue work for a track (idempotent). `fresh` gives a failed job a new attempt budget.
-    pub fn request(&self, track_id: &str, priority: i64, reason: &str, kind: &str, fresh: bool) -> bool {
-        let queued = self.store.enqueue(track_id, kind, priority, Some(reason), fresh);
+    pub fn request(
+        &self,
+        track_id: &str,
+        priority: i64,
+        reason: &str,
+        kind: &str,
+        fresh: bool,
+    ) -> bool {
+        let queued = self
+            .store
+            .enqueue(track_id, kind, priority, Some(reason), fresh);
         if queued || fresh {
             if kind == "download"
                 && let Some(track) = self.store.get_track(track_id)
                 && track.status != "ready"
                 && track.status != "downloading"
             {
-                self.store.update_track(track_id, &[Field::status("queued"), Field::Error(None)]);
+                self.store
+                    .update_track(track_id, &[Field::status("queued"), Field::Error(None)]);
             }
             self.wake(priority);
         }
@@ -127,7 +138,12 @@ impl Scheduler {
     }
 
     fn wake(&self, priority: i64) {
-        if priority <= PREFETCH { &self.priority_wake } else { &self.background_wake }.notify_waiters();
+        if priority <= PREFETCH {
+            &self.priority_wake
+        } else {
+            &self.background_wake
+        }
+        .notify_waiters();
     }
 
     /// Wait until the download job of `track_id` finishes; the backing track or None.
@@ -148,7 +164,11 @@ impl Scheduler {
             Some(job) if job.state != "done" && job.state != "failed" => {}
             _ => return track.filter(|t| t.is_ready()),
         }
-        tokio::time::timeout(timeout, rx).await.ok().and_then(Result::ok).flatten()
+        tokio::time::timeout(timeout, rx)
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .flatten()
     }
 
     fn resolve(&self, track_id: &str, result: Option<Track>) {
@@ -177,7 +197,9 @@ impl Scheduler {
                 let _ = tokio::time::timeout(self.next_wakeup(), woken).await;
                 continue;
             };
-            let Ok(permit) = self.priority_slots.clone().acquire_owned().await else { return };
+            let Ok(permit) = self.priority_slots.clone().acquire_owned().await else {
+                return;
+            };
             let me = self.clone();
             tokio::spawn(async move {
                 me.execute(job).await;
@@ -202,7 +224,8 @@ impl Scheduler {
         let key = (job.track_id.clone(), job.kind.clone());
         let handler = self.handlers.read().get(&job.kind).cloned();
         if job.kind == "download" {
-            self.store.update_track(&job.track_id, &[Field::status("downloading")]);
+            self.store
+                .update_track(&job.track_id, &[Field::status("downloading")]);
         }
         let started = Instant::now();
         let cancel = CancellationToken::new();
@@ -213,7 +236,10 @@ impl Scheduler {
             let (job, token) = (job.clone(), cancel.clone());
             let task = tokio::spawn(crate::deezer::BACKGROUND.scope(background, async move {
                 match handler {
-                    None => Err(SourceError::new(format!("no handler for {}", job.kind), false)),
+                    None => Err(SourceError::new(
+                        format!("no handler for {}", job.kind),
+                        false,
+                    )),
                     Some(h) => h(job, token).await,
                 }
             }));
@@ -225,17 +251,30 @@ impl Scheduler {
         let result = match outcome {
             Ok(Ok(result)) => result,
             Ok(Err(SourceError::Cancelled)) => {
-                self.store.finish_job(&job.track_id, &job.kind, "queued", None, Some(crate::util::now()));
+                self.store.finish_job(
+                    &job.track_id,
+                    &job.kind,
+                    "queued",
+                    None,
+                    Some(crate::util::now()),
+                );
                 return;
             }
             Ok(Err(e)) => return self.failed(&job, e.transient(), &e.to_string()),
             Err(e) if e.is_cancelled() => {
-                self.store.finish_job(&job.track_id, &job.kind, "queued", None, Some(crate::util::now()));
+                self.store.finish_job(
+                    &job.track_id,
+                    &job.kind,
+                    "queued",
+                    None,
+                    Some(crate::util::now()),
+                );
                 return;
             }
             Err(e) => return self.failed(&job, true, &format!("handler panicked: {e}")),
         };
-        self.store.finish_job(&job.track_id, &job.kind, "done", None, None);
+        self.store
+            .finish_job(&job.track_id, &job.kind, "done", None, None);
         tracing::info!(
             "{} {} done in {:.1}s (P{}, {})",
             job.kind,
@@ -261,22 +300,49 @@ impl Scheduler {
             m => m,
         };
         if transient && (job.attempts as usize) < self.backoff.len() {
-            let delay = self.backoff[(job.attempts.max(1) as usize - 1).min(self.backoff.len() - 1)];
-            tracing::warn!("{} {} failed (attempt {}), retry in {delay}s: {message}", job.kind, job.track_id, job.attempts);
-            self.store.finish_job(&job.track_id, &job.kind, "queued", Some(&message), Some(crate::util::now() + delay));
+            let delay =
+                self.backoff[(job.attempts.max(1) as usize - 1).min(self.backoff.len() - 1)];
+            tracing::warn!(
+                "{} {} failed (attempt {}), retry in {delay}s: {message}",
+                job.kind,
+                job.track_id,
+                job.attempts
+            );
+            self.store.finish_job(
+                &job.track_id,
+                &job.kind,
+                "queued",
+                Some(&message),
+                Some(crate::util::now() + delay),
+            );
             self.wake(job.priority); // re-arm the lane's timer for the retry
             if job.kind == "download" {
-                self.store.update_track(&job.track_id, &[Field::status("queued"), Field::Error(Some(message))]);
+                self.store.update_track(
+                    &job.track_id,
+                    &[Field::status("queued"), Field::Error(Some(message))],
+                );
                 // A waiting stream should not hang for minutes on a retry.
                 self.resolve(&job.track_id, None);
             }
             return;
         }
-        tracing::warn!("{} {} failed permanently: {message}", job.kind, job.track_id);
-        self.store.finish_job(&job.track_id, &job.kind, "failed", Some(&message), None);
+        tracing::warn!(
+            "{} {} failed permanently: {message}",
+            job.kind,
+            job.track_id
+        );
+        self.store
+            .finish_job(&job.track_id, &job.kind, "failed", Some(&message), None);
         if job.kind == "download" {
-            if self.store.get_track(&job.track_id).is_some_and(|t| !t.is_ready()) {
-                self.store.update_track(&job.track_id, &[Field::status("failed"), Field::Error(Some(message))]);
+            if self
+                .store
+                .get_track(&job.track_id)
+                .is_some_and(|t| !t.is_ready())
+            {
+                self.store.update_track(
+                    &job.track_id,
+                    &[Field::status("failed"), Field::Error(Some(message))],
+                );
             }
             self.resolve(&job.track_id, None);
         }
@@ -297,7 +363,13 @@ mod tests {
     fn ready_track(store: &Store, dir: &std::path::Path, id: &str) -> Option<Track> {
         let f = dir.join(format!("{}.m4a", id.replace(':', "_")));
         std::fs::write(&f, b"x").unwrap();
-        store.update_track(id, &[Field::status("ready"), Field::File(Some(f.display().to_string()))]);
+        store.update_track(
+            id,
+            &[
+                Field::status("ready"),
+                Field::File(Some(f.display().to_string())),
+            ],
+        );
         store.get_track(id)
     }
 
@@ -327,11 +399,25 @@ mod tests {
         let running = Arc::new(Mutex::new(std::collections::HashSet::<String>::new()));
         let peak = Arc::new(AtomicUsize::new(0));
         let s = Arc::new(Scheduler::new(store.clone(), 5, 32));
-        let (st, d, g, o, r, p) = (store.clone(), dir.path().to_path_buf(), gate.clone(), open.clone(), running.clone(), peak.clone());
+        let (st, d, g, o, r, p) = (
+            store.clone(),
+            dir.path().to_path_buf(),
+            gate.clone(),
+            open.clone(),
+            running.clone(),
+            peak.clone(),
+        );
         s.set_handler(
             "download",
             handler(move |job, _| {
-                let (st, d, g, o, r, p) = (st.clone(), d.clone(), g.clone(), o.clone(), r.clone(), p.clone());
+                let (st, d, g, o, r, p) = (
+                    st.clone(),
+                    d.clone(),
+                    g.clone(),
+                    o.clone(),
+                    r.clone(),
+                    p.clone(),
+                );
                 async move {
                     let bg = {
                         let mut r = r.lock();
@@ -341,7 +427,8 @@ mod tests {
                     if job.priority >= BACKGROUND {
                         p.fetch_max(bg, Ordering::SeqCst);
                         while !o.load(Ordering::SeqCst) {
-                            let _ = tokio::time::timeout(Duration::from_millis(20), g.notified()).await;
+                            let _ =
+                                tokio::time::timeout(Duration::from_millis(20), g.notified()).await;
                         }
                     }
                     r.lock().remove(&job.track_id);
@@ -350,7 +437,10 @@ mod tests {
             }),
         );
         for i in 0..12 {
-            store.remember_track(&format!("deezer:bg{i}"), &m(json!({"title": i.to_string()})));
+            store.remember_track(
+                &format!("deezer:bg{i}"),
+                &m(json!({"title": i.to_string()})),
+            );
             s.download(&format!("deezer:bg{i}"), BACKGROUND, "import", false);
         }
         s.start();
@@ -373,7 +463,12 @@ mod tests {
         let calls = Arc::new(Mutex::new(Vec::<String>::new()));
         let gate = Arc::new(tokio::sync::Semaphore::new(0));
         let s = Arc::new(Scheduler::new(store.clone(), 1, 32));
-        let (st, d, c, g) = (store.clone(), dir.path().to_path_buf(), calls.clone(), gate.clone());
+        let (st, d, c, g) = (
+            store.clone(),
+            dir.path().to_path_buf(),
+            calls.clone(),
+            gate.clone(),
+        );
         s.set_handler(
             "download",
             handler(move |job, _| {
@@ -389,8 +484,14 @@ mod tests {
         s.download("deezer:1", BACKGROUND, "album", false);
         s.start();
         until(|| *calls.lock() == ["deezer:1"]).await;
-        assert!(!s.download("deezer:1", PLAY, "play", false), "already running: not queued twice");
-        assert_eq!(s.running(), [("deezer:1".to_string(), "download".to_string())]);
+        assert!(
+            !s.download("deezer:1", PLAY, "play", false),
+            "already running: not queued twice"
+        );
+        assert_eq!(
+            s.running(),
+            [("deezer:1".to_string(), "download".to_string())]
+        );
         let s2 = s.clone();
         let waiter = tokio::spawn(async move { s2.wait("deezer:1", Duration::from_secs(2)).await });
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -430,14 +531,24 @@ mod tests {
     async fn permanent_failure_is_not_retried_and_waiters_get_none() {
         let store = store();
         let s = Arc::new(Scheduler::new(store.clone(), 1, 32));
-        s.set_handler("download", handler(|_, _| async { Err(SourceError::new("no matching audio", false)) }));
+        s.set_handler(
+            "download",
+            handler(|_, _| async { Err(SourceError::new("no matching audio", false)) }),
+        );
         store.remember_track("deezer:1", &m(json!({"title": "x"})));
         s.download("deezer:1", PLAY, "play", false);
         s.start();
         assert!(s.wait("deezer:1", Duration::from_secs(2)).await.is_none());
         until(|| store.get_job("deezer:1", "download").unwrap().state == "failed").await;
         assert_eq!(store.get_job("deezer:1", "download").unwrap().attempts, 1);
-        assert!(store.get_track("deezer:1").unwrap().error.unwrap().contains("no matching audio"));
+        assert!(
+            store
+                .get_track("deezer:1")
+                .unwrap()
+                .error
+                .unwrap()
+                .contains("no matching audio")
+        );
         s.stop().await;
     }
 
@@ -451,8 +562,19 @@ mod tests {
         s.download("deezer:1", PLAY, "play", false);
         s.start();
         until(|| store.get_job("deezer:1", "upgrade").unwrap().state == "failed").await;
-        until(|| store.get_job("deezer:1", "download").unwrap().error.is_some_and(|e| e.contains("panicked"))).await;
-        assert_eq!(store.get_job("deezer:1", "download").unwrap().state, "queued", "a panic is retried");
+        until(|| {
+            store
+                .get_job("deezer:1", "download")
+                .unwrap()
+                .error
+                .is_some_and(|e| e.contains("panicked"))
+        })
+        .await;
+        assert_eq!(
+            store.get_job("deezer:1", "download").unwrap().state,
+            "queued",
+            "a panic is retried"
+        );
         s.stop().await;
     }
 
@@ -462,11 +584,26 @@ mod tests {
         let s = Scheduler::new(store.clone(), 1, 32);
         store.remember_track("deezer:1", &m(json!({"title": "x"})));
         ready_track(&store, dir.path(), "deezer:1");
-        assert_eq!(s.wait("deezer:1", Duration::from_millis(100)).await.unwrap().id, "deezer:1");
+        assert_eq!(
+            s.wait("deezer:1", Duration::from_millis(100))
+                .await
+                .unwrap()
+                .id,
+            "deezer:1"
+        );
         store.remember_track("deezer:2", &m(json!({"title": "y"})));
         store.enqueue("deezer:2", "download", 2, None, false);
-        assert!(s.wait("deezer:2", Duration::from_millis(50)).await.is_none());
-        assert!(s.wait("deezer:3", Duration::from_millis(50)).await.is_none(), "no job at all");
+        assert!(
+            s.wait("deezer:2", Duration::from_millis(50))
+                .await
+                .is_none()
+        );
+        assert!(
+            s.wait("deezer:3", Duration::from_millis(50))
+                .await
+                .is_none(),
+            "no job at all"
+        );
     }
 
     #[tokio::test]
@@ -497,7 +634,13 @@ mod tests {
         s.start();
         until(|| seen.lock().len() == 2).await;
         seen.lock().sort();
-        assert_eq!(*seen.lock(), [("album".to_string(), "deezer:2".to_string()), ("like:alice".into(), "deezer:1".into())]);
+        assert_eq!(
+            *seen.lock(),
+            [
+                ("album".to_string(), "deezer:2".to_string()),
+                ("like:alice".into(), "deezer:1".into())
+            ]
+        );
         s.stop().await;
     }
 

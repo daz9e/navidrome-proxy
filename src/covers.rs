@@ -23,12 +23,18 @@ impl Covers {
             .connect_timeout(Duration::from_secs(5))
             .build()
             .expect("http client");
-        Self { cache_dir: cache_dir.to_path_buf(), http, locks: Mutex::new(HashMap::new()) }
+        Self {
+            cache_dir: cache_dir.to_path_buf(),
+            http,
+            locks: Mutex::new(HashMap::new()),
+        }
     }
 
     fn path(&self, url: &str) -> PathBuf {
         let digest = hex::encode(Sha256::digest(url.as_bytes()));
-        self.cache_dir.join(&digest[..2]).join(format!("{digest}.img"))
+        self.cache_dir
+            .join(&digest[..2])
+            .join(format!("{digest}.img"))
     }
 
     /// Image bytes and content type, or None when unavailable.
@@ -37,7 +43,12 @@ impl Covers {
             return None;
         }
         let path = self.path(url);
-        let lock = self.locks.lock().entry(url.to_string()).or_default().clone();
+        let lock = self
+            .locks
+            .lock()
+            .entry(url.to_string())
+            .or_default()
+            .clone();
         let result = {
             let _guard = lock.lock().await;
             self.get_locked(url, &path).await
@@ -159,9 +170,14 @@ mod tests {
             "/{name}",
             axum::routing::get(|UrlPath(name): UrlPath<String>| async move {
                 let full = jpeg();
-                let body = if name == "cut.jpg" { full[..full.len() - 100].to_vec() } else { full.clone() };
+                let body = if name == "cut.jpg" {
+                    full[..full.len() - 100].to_vec()
+                } else {
+                    full.clone()
+                };
                 // Like a CDN: the body arrives in several chunks, with the full length announced.
-                let chunks: Vec<Result<Vec<u8>, std::io::Error>> = body.chunks(8192).map(|c| Ok(c.to_vec())).collect();
+                let chunks: Vec<Result<Vec<u8>, std::io::Error>> =
+                    body.chunks(8192).map(|c| Ok(c.to_vec())).collect();
                 Response::builder()
                     .header("Content-Type", "image/jpeg")
                     .header("Content-Length", full.len())
@@ -189,7 +205,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let server = cdn().await;
         let covers = Covers::new(dir.path());
-        assert!(covers.get(&format!("{}/cut.jpg", server.url)).await.is_none());
+        assert!(
+            covers
+                .get(&format!("{}/cut.jpg", server.url))
+                .await
+                .is_none()
+        );
         assert!(walk(dir.path()).is_empty());
     }
 

@@ -32,10 +32,13 @@ use std::time::{Duration, Instant};
 use tokio::sync::Notify;
 use unicode_normalization::UnicodeNormalization;
 
-static TOKEN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[(deezer-\d+|yt-[A-Za-z0-9_-]{11}|sc-\d+)\]").unwrap());
-static LEGACY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(deezer-\d+|yt-[A-Za-z0-9_-]{11})$").unwrap());
+static TOKEN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\[(deezer-\d+|yt-[A-Za-z0-9_-]{11}|sc-\d+)\]").unwrap());
+static LEGACY: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(deezer-\d+|yt-[A-Za-z0-9_-]{11})$").unwrap());
 /// First proxy: a Deezer track whose audio came from YouTube, kept without album tags.
-pub static LEGACY_YOUTUBE_FALLBACK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^yt-(\d+)-yt$").unwrap());
+pub static LEGACY_YOUTUBE_FALLBACK: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^yt-(\d+)-yt$").unwrap());
 static UNSAFE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"[\x00-\x1f/\\:*?"<>|]+"#).unwrap());
 
 /// Byte cap per path component: leaves room for the track prefix, the id token, the
@@ -83,9 +86,19 @@ pub fn track_id_from_path(path: &str) -> Option<String> {
 pub fn safe_name(value: &str, limit: usize, fallback: &str) -> String {
     let text: String = value.nfc().collect::<String>();
     let text = UNSAFE.replace_all(text.trim(), " ");
-    let mut text = text.split_whitespace().collect::<Vec<_>>().join(" ").trim_matches(['.', ' ']).to_string();
+    let mut text = text
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim_matches(['.', ' '])
+        .to_string();
     if text.len() > limit * 2 || text.chars().count() > limit {
-        text = text.chars().take(limit).collect::<String>().trim_end_matches(['.', ' ']).to_string();
+        text = text
+            .chars()
+            .take(limit)
+            .collect::<String>()
+            .trim_end_matches(['.', ' '])
+            .to_string();
     }
     if text.len() > MAX_NAME_BYTES {
         let mut cut = MAX_NAME_BYTES;
@@ -94,7 +107,11 @@ pub fn safe_name(value: &str, limit: usize, fallback: &str) -> String {
         }
         text = text[..cut].trim_end_matches(['.', ' ']).to_string();
     }
-    if text.is_empty() { fallback.to_string() } else { text }
+    if text.is_empty() {
+        fallback.to_string()
+    } else {
+        text
+    }
 }
 
 /// `<library>`-relative path of a track file.
@@ -102,16 +119,34 @@ pub fn relative_path(track_id: &str, meta: &Json, suffix: &str) -> Option<PathBu
     let token = file_stem(track_id)?;
     let suffix = suffix.trim_start_matches('.');
     let title = safe_name(&as_str(meta.get("title")), 100, "Untitled");
-    let lead = match meta.get("artists").and_then(Value::as_array).and_then(|a| a.first()) {
+    let lead = match meta
+        .get("artists")
+        .and_then(Value::as_array)
+        .and_then(|a| a.first())
+    {
         Some(first) => as_str(Some(first)),
         None => as_str(meta.get("artist")),
     };
     if !token.starts_with("deezer-") && !truthy(meta.get("album")) {
-        let folder = if token.starts_with("yt-") { "YouTube" } else { "SoundCloud" };
-        return Some(PathBuf::from(safe_name(&lead, 80, "Unknown")).join(folder).join(format!("{title} [{token}].{suffix}")));
+        let folder = if token.starts_with("yt-") {
+            "YouTube"
+        } else {
+            "SoundCloud"
+        };
+        return Some(
+            PathBuf::from(safe_name(&lead, 80, "Unknown"))
+                .join(folder)
+                .join(format!("{title} [{token}].{suffix}")),
+        );
     }
-    let album_artist = Some(as_str(meta.get("album_artist"))).filter(|s| !s.is_empty()).unwrap_or(lead);
-    let folder = PathBuf::from(safe_name(&album_artist, 80, "Unknown")).join(safe_name(&as_str(meta.get("album")), 80, "Singles"));
+    let album_artist = Some(as_str(meta.get("album_artist")))
+        .filter(|s| !s.is_empty())
+        .unwrap_or(lead);
+    let folder = PathBuf::from(safe_name(&album_artist, 80, "Unknown")).join(safe_name(
+        &as_str(meta.get("album")),
+        80,
+        "Singles",
+    ));
     let track = as_uint(meta.get("track"));
     let prefix = if track > 0 {
         let disc = match as_uint(meta.get("disc")) {
@@ -136,7 +171,10 @@ pub struct Library {
 
 impl Library {
     pub fn new(music_dir: impl Into<PathBuf>, staging_dir: impl Into<PathBuf>) -> Self {
-        Self { music_dir: music_dir.into(), staging_dir: staging_dir.into() }
+        Self {
+            music_dir: music_dir.into(),
+            staging_dir: staging_dir.into(),
+        }
     }
 
     pub fn new_staging(&self, track_id: &str) -> io::Result<PathBuf> {
@@ -148,15 +186,28 @@ impl Library {
 
     /// Remove leftovers of crashed downloads older than `max_age` seconds.
     pub fn cleanup_staging(&self, max_age: f64) -> usize {
-        let Ok(entries) = std::fs::read_dir(&self.staging_dir) else { return 0 };
+        let Ok(entries) = std::fs::read_dir(&self.staging_dir) else {
+            return 0;
+        };
         let cutoff = crate::util::now() - max_age;
         let mut removed = 0;
         for entry in entries.flatten() {
             let path = entry.path();
-            let Ok(meta) = std::fs::symlink_metadata(&path) else { continue };
-            let mtime = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs_f64()).unwrap_or(0.0);
+            let Ok(meta) = std::fs::symlink_metadata(&path) else {
+                continue;
+            };
+            let mtime = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs_f64())
+                .unwrap_or(0.0);
             if mtime < cutoff {
-                let result = if meta.is_dir() { std::fs::remove_dir_all(&path) } else { std::fs::remove_file(&path) };
+                let result = if meta.is_dir() {
+                    std::fs::remove_dir_all(&path)
+                } else {
+                    std::fs::remove_file(&path)
+                };
                 if result.is_ok() {
                     removed += 1;
                 }
@@ -167,10 +218,16 @@ impl Library {
 
     /// Whether `path` (not following a final symlink) lies inside the music directory.
     pub fn contains(&self, path: &Path) -> bool {
-        let (Ok(root), Some(parent), Some(name)) = (self.music_dir.canonicalize(), path.parent(), path.file_name()) else {
+        let (Ok(root), Some(parent), Some(name)) = (
+            self.music_dir.canonicalize(),
+            path.parent(),
+            path.file_name(),
+        ) else {
             return false;
         };
-        parent.canonicalize().is_ok_and(|p| p.join(name).starts_with(&root) && p.join(name) != root)
+        parent
+            .canonicalize()
+            .is_ok_and(|p| p.join(name).starts_with(&root) && p.join(name) != root)
     }
 
     /// Atomically move a finished file into the library.
@@ -178,9 +235,17 @@ impl Library {
     /// Replacing an existing file (source upgrade) is a single rename, so a
     /// concurrent stream keeps reading the old inode and never sees a partial file.
     /// `previous` is only deleted when it lies inside the music directory.
-    pub fn publish(&self, track_id: &str, prepared: &Path, meta: &Json, previous: Option<&str>) -> io::Result<PathBuf> {
+    pub fn publish(
+        &self,
+        track_id: &str,
+        prepared: &Path,
+        meta: &Json,
+        previous: Option<&str>,
+    ) -> io::Result<PathBuf> {
         let suffix = crate::audio::suffix_of(prepared);
-        let dest = self.music_dir.join(relative_path(track_id, meta, &suffix).ok_or_else(|| invalid(track_id))?);
+        let dest = self
+            .music_dir
+            .join(relative_path(track_id, meta, &suffix).ok_or_else(|| invalid(track_id))?);
         let parent = dest.parent().unwrap_or(&self.music_dir);
         std::fs::create_dir_all(parent)?;
         let name = dest.file_name().and_then(|n| n.to_str()).unwrap_or("track");
@@ -197,7 +262,10 @@ impl Library {
         }
         if let Some(previous) = previous.map(PathBuf::from).filter(|p| *p != dest) {
             if !self.contains(&previous) {
-                tracing::warn!("not deleting {}: outside the music directory", previous.display());
+                tracing::warn!(
+                    "not deleting {}: outside the music directory",
+                    previous.display()
+                );
             } else if std::fs::remove_file(&previous).is_ok() {
                 for ext in ["lrc", "txt"] {
                     let (old, new) = (previous.with_extension(ext), dest.with_extension(ext));
@@ -215,7 +283,10 @@ impl Library {
 
     /// Remove folders left empty by a move, never the music root itself.
     pub fn prune(&self, folder: &Path) {
-        let (Ok(root), Ok(mut current)) = (self.music_dir.canonicalize(), folder.canonicalize()) else { return };
+        let (Ok(root), Ok(mut current)) = (self.music_dir.canonicalize(), folder.canonicalize())
+        else {
+            return;
+        };
         while current != root && current.starts_with(&root) {
             if std::fs::remove_dir(&current).is_err() {
                 return;
@@ -229,7 +300,10 @@ impl Library {
 }
 
 fn invalid(track_id: &str) -> io::Error {
-    io::Error::new(io::ErrorKind::InvalidInput, format!("not an external track id: {track_id}"))
+    io::Error::new(
+        io::ErrorKind::InvalidInput,
+        format!("not an external track id: {track_id}"),
+    )
 }
 
 pub type CredentialsProvider = Arc<dyn Fn() -> Option<Params> + Send + Sync>;
@@ -257,7 +331,13 @@ pub struct Indexer {
 }
 
 impl Indexer {
-    pub fn new(store: Arc<Store>, navidrome: Arc<Navidrome>, credentials: CredentialsProvider, debounce: f64, on_mapped: Option<OnMapped>) -> Self {
+    pub fn new(
+        store: Arc<Store>,
+        navidrome: Arc<Navidrome>,
+        credentials: CredentialsProvider,
+        debounce: f64,
+        on_mapped: Option<OnMapped>,
+    ) -> Self {
         Self {
             store,
             navidrome,
@@ -328,21 +408,30 @@ impl Indexer {
     }
 
     pub async fn scan(&self) {
-        let Some(creds) = (self.credentials)() else { return };
+        let Some(creds) = (self.credentials)() else {
+            return;
+        };
         match self.navidrome.call("startScan", &creds, &[]).await {
             Ok(_) => {}
             // Non-admin users cannot start scans; Navidrome's watcher still picks files up.
-            Err(e @ crate::navidrome::NdError::Upstream { .. }) => tracing::debug!("startScan refused: {e}"),
+            Err(e @ crate::navidrome::NdError::Upstream { .. }) => {
+                tracing::debug!("startScan refused: {e}")
+            }
             Err(e) => tracing::warn!("startScan failed: {e}"),
         }
     }
 
     pub async fn resolve(&self, tracks: &[Track]) -> usize {
-        let Some(creds) = (self.credentials)() else { return 0 };
+        let Some(creds) = (self.credentials)() else {
+            return 0;
+        };
         let mut resolved = 0;
         for track in tracks {
-            let Some(local_id) = self.find_local_id(track, &creds).await else { continue };
-            self.store.update_track(&track.id, &[Field::LocalId(Some(local_id))]);
+            let Some(local_id) = self.find_local_id(track, &creds).await else {
+                continue;
+            };
+            self.store
+                .update_track(&track.id, &[Field::LocalId(Some(local_id))]);
             resolved += 1;
             if let (Some(hook), Some(fresh)) = (&self.on_mapped, self.store.get_track(&track.id)) {
                 hook(fresh).await;
@@ -360,16 +449,39 @@ impl Indexer {
         let file = track.file.as_deref().filter(|f| !f.is_empty())?;
         let size = std::fs::metadata(file).ok()?.len() as i64;
         let token = file_stem(&track.id)?;
-        let file_name = Path::new(file).file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let file_name = Path::new(file)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
         let title = track.title();
         let mut queries = vec![title.clone()];
-        let with_artist = format!("{title} {}", track.artists().first().cloned().unwrap_or_default()).trim().to_string();
+        let with_artist = format!(
+            "{title} {}",
+            track.artists().first().cloned().unwrap_or_default()
+        )
+        .trim()
+        .to_string();
         if with_artist != title {
             queries.push(with_artist);
         }
-        let duration = as_f64(track.audio.get("duration")).filter(|d| *d != 0.0).unwrap_or_else(|| track.duration());
+        let duration = as_f64(track.audio.get("duration"))
+            .filter(|d| *d != 0.0)
+            .unwrap_or_else(|| track.duration());
         for query in queries.into_iter().filter(|q| !q.is_empty()) {
-            let root = match self.navidrome.call("search3", creds, &[("query", &query), ("songCount", "100"), ("albumCount", "0"), ("artistCount", "0")]).await {
+            let root = match self
+                .navidrome
+                .call(
+                    "search3",
+                    creds,
+                    &[
+                        ("query", &query),
+                        ("songCount", "100"),
+                        ("albumCount", "0"),
+                        ("artistCount", "0"),
+                    ],
+                )
+                .await
+            {
                 Ok(root) => root,
                 Err(e) => {
                     tracing::debug!("local id lookup failed for {}: {e}", track.id);
@@ -390,8 +502,15 @@ impl Indexer {
                     return Some(crate::navidrome::id_of(song));
                 }
             }
-            let pool: Vec<&Json> = if by_size.is_empty() { songs.iter().collect() } else { by_size };
-            let (want_title, want_album) = (matching::normalize(&title), matching::normalize(&as_str(track.meta.get("album"))));
+            let pool: Vec<&Json> = if by_size.is_empty() {
+                songs.iter().collect()
+            } else {
+                by_size
+            };
+            let (want_title, want_album) = (
+                matching::normalize(&title),
+                matching::normalize(&as_str(track.meta.get("album"))),
+            );
             let exact: Vec<&&Json> = pool
                 .iter()
                 .filter(|s| {
@@ -415,13 +534,18 @@ mod tests {
     use serde_json::json;
 
     fn meta() -> Json {
-        m(json!({"title": "Hella Quality", "artists": ["TVETH", "Bato"], "album_artist": "TVETH", "album": "RAW", "track": 3, "disc": 1}))
+        m(
+            json!({"title": "Hella Quality", "artists": ["TVETH", "Bato"], "album_artist": "TVETH", "album": "RAW", "track": 3, "disc": 1}),
+        )
     }
 
     #[test]
     fn file_stem_kinds() {
         assert_eq!(file_stem("deezer:42").as_deref(), Some("deezer-42"));
-        assert_eq!(file_stem("yt:sO4pSj466Hk").as_deref(), Some("yt-sO4pSj466Hk"));
+        assert_eq!(
+            file_stem("yt:sO4pSj466Hk").as_deref(),
+            Some("yt-sO4pSj466Hk")
+        );
         assert_eq!(file_stem("sc:123").as_deref(), Some("sc-123"));
         assert_eq!(file_stem("L1"), None);
         assert_eq!(file_stem("deezer-album:1"), None);
@@ -429,38 +553,99 @@ mod tests {
 
     #[test]
     fn relative_path_layout() {
-        let p = |id: &str, meta: Value, sfx: &str| relative_path(id, &m(meta), sfx).unwrap().display().to_string();
-        assert_eq!(relative_path("deezer:1", &meta(), ".m4a").unwrap().display().to_string(), "TVETH/RAW/1-03 - Hella Quality [deezer-1].m4a");
-        assert_eq!(p("yt:sO4pSj466Hk", json!({"title": "Кошмар", "artists": ["ЮПИ"]}), "m4a"), "ЮПИ/YouTube/Кошмар [yt-sO4pSj466Hk].m4a");
-        assert_eq!(p("deezer:2", json!({"title": "AC/DC: Why?", "artist": "..", "album": null}), ".mp3"), "Unknown/Singles/AC DC Why [deezer-2].mp3");
-        assert_eq!(p("sc:5", json!({"title": "x", "artist": "Y"}), "m4a"), "Y/SoundCloud/x [sc-5].m4a");
-        assert_eq!(p("yt:sO4pSj466Hk", json!({"title": "t", "artist": "A", "album": "Al", "track": 2, "disc": 0}), "m4a"), "A/Al/1-02 - t [yt-sO4pSj466Hk].m4a");
+        let p = |id: &str, meta: Value, sfx: &str| {
+            relative_path(id, &m(meta), sfx)
+                .unwrap()
+                .display()
+                .to_string()
+        };
+        assert_eq!(
+            relative_path("deezer:1", &meta(), ".m4a")
+                .unwrap()
+                .display()
+                .to_string(),
+            "TVETH/RAW/1-03 - Hella Quality [deezer-1].m4a"
+        );
+        assert_eq!(
+            p(
+                "yt:sO4pSj466Hk",
+                json!({"title": "Кошмар", "artists": ["ЮПИ"]}),
+                "m4a"
+            ),
+            "ЮПИ/YouTube/Кошмар [yt-sO4pSj466Hk].m4a"
+        );
+        assert_eq!(
+            p(
+                "deezer:2",
+                json!({"title": "AC/DC: Why?", "artist": "..", "album": null}),
+                ".mp3"
+            ),
+            "Unknown/Singles/AC DC Why [deezer-2].mp3"
+        );
+        assert_eq!(
+            p("sc:5", json!({"title": "x", "artist": "Y"}), "m4a"),
+            "Y/SoundCloud/x [sc-5].m4a"
+        );
+        assert_eq!(
+            p(
+                "yt:sO4pSj466Hk",
+                json!({"title": "t", "artist": "A", "album": "Al", "track": 2, "disc": 0}),
+                "m4a"
+            ),
+            "A/Al/1-02 - t [yt-sO4pSj466Hk].m4a"
+        );
         assert!(relative_path("L1", &meta(), "m4a").is_none());
     }
 
     #[test]
     fn safe_name_limits_length() {
-        assert_eq!(safe_name(&"x".repeat(500), 80, "Unknown").chars().count(), 80);
+        assert_eq!(
+            safe_name(&"x".repeat(500), 80, "Unknown").chars().count(),
+            80
+        );
         assert_eq!(safe_name("  ", 80, "Unknown"), "Unknown");
         assert_eq!(safe_name("e\u{301}", 80, "U"), "\u{e9}", "NFC");
         // B9: 4-byte characters within the char limit still fit a file name.
         let emoji = safe_name(&"😀".repeat(100), 100, "U");
         assert!(emoji.len() <= MAX_NAME_BYTES && emoji.chars().all(|c| c == '😀'));
-        let path = relative_path("deezer:12345678901234567890", &m(json!({"title": "😀".repeat(100), "album": "a", "track": 99, "disc": 99})), "m4a").unwrap();
+        let path = relative_path(
+            "deezer:12345678901234567890",
+            &m(json!({"title": "😀".repeat(100), "album": "a", "track": 99, "disc": 99})),
+            "m4a",
+        )
+        .unwrap();
         assert!(path.file_name().unwrap().len() + ".x.abcdef.part".len() <= 255);
     }
 
     #[test]
     fn track_id_from_path_new_and_legacy() {
         let t = track_id_from_path;
-        assert_eq!(t("TVETH/RAW/1-03 - Hella Quality [deezer-1].m4a").as_deref(), Some("deezer:1"));
-        assert_eq!(t("/music/deezer-4274804272.m4a").as_deref(), Some("deezer:4274804272"));
-        assert_eq!(t("ЮПИ/YouTube/Кошмар [yt-sO4pSj466Hk].m4a").as_deref(), Some("yt:sO4pSj466Hk"));
-        assert_eq!(t("Юпи/SoundCloud/x [sc-2398309779].m4a").as_deref(), Some("sc:2398309779"));
+        assert_eq!(
+            t("TVETH/RAW/1-03 - Hella Quality [deezer-1].m4a").as_deref(),
+            Some("deezer:1")
+        );
+        assert_eq!(
+            t("/music/deezer-4274804272.m4a").as_deref(),
+            Some("deezer:4274804272")
+        );
+        assert_eq!(
+            t("ЮПИ/YouTube/Кошмар [yt-sO4pSj466Hk].m4a").as_deref(),
+            Some("yt:sO4pSj466Hk")
+        );
+        assert_eq!(
+            t("Юпи/SoundCloud/x [sc-2398309779].m4a").as_deref(),
+            Some("sc:2398309779")
+        );
         assert_eq!(t("Persona/Aria of the Soul.m4a"), None);
         // first proxy: YouTube audio for a Deezer track ("99624046-yt" is 11 chars, not a video id)
-        assert_eq!(t("/music/yt-99624046-yt.m4a").as_deref(), Some("deezer:99624046"));
-        assert_eq!(t("/music/yt-4145181542-yt.m4a").as_deref(), Some("deezer:4145181542"));
+        assert_eq!(
+            t("/music/yt-99624046-yt.m4a").as_deref(),
+            Some("deezer:99624046")
+        );
+        assert_eq!(
+            t("/music/yt-4145181542-yt.m4a").as_deref(),
+            Some("deezer:4145181542")
+        );
     }
 
     #[test]
@@ -471,17 +656,31 @@ mod tests {
         let first = lib.new_staging("deezer:1").unwrap().join("audio.m4a");
         std::fs::write(&first, b"one").unwrap();
         let dest = lib.publish("deezer:1", &first, &meta(), None).unwrap();
-        assert_eq!(dest, music.join("TVETH/RAW/1-03 - Hella Quality [deezer-1].m4a"));
+        assert_eq!(
+            dest,
+            music.join("TVETH/RAW/1-03 - Hella Quality [deezer-1].m4a")
+        );
         assert_eq!(std::fs::read(&dest).unwrap(), b"one");
         use std::os::unix::fs::PermissionsExt;
-        assert_eq!(std::fs::metadata(&dest).unwrap().permissions().mode() & 0o777, 0o644);
+        assert_eq!(
+            std::fs::metadata(&dest).unwrap().permissions().mode() & 0o777,
+            0o644
+        );
         std::fs::write(dest.with_extension("lrc"), "[00:01]x").unwrap();
         let upgrade = lib.new_staging("deezer:1").unwrap().join("audio.mp3");
         std::fs::write(&upgrade, b"two").unwrap();
-        let dest2 = lib.publish("deezer:1", &upgrade, &meta(), Some(dest.to_str().unwrap())).unwrap();
+        let dest2 = lib
+            .publish("deezer:1", &upgrade, &meta(), Some(dest.to_str().unwrap()))
+            .unwrap();
         assert!(dest2.extension().unwrap() == "mp3" && !dest.exists());
-        assert_eq!(std::fs::read_to_string(dest2.with_extension("lrc")).unwrap(), "[00:01]x");
-        let parts: Vec<_> = walk(&music).into_iter().filter(|p| p.to_string_lossy().ends_with(".part")).collect();
+        assert_eq!(
+            std::fs::read_to_string(dest2.with_extension("lrc")).unwrap(),
+            "[00:01]x"
+        );
+        let parts: Vec<_> = walk(&music)
+            .into_iter()
+            .filter(|p| p.to_string_lossy().ends_with(".part"))
+            .collect();
         assert!(parts.is_empty());
     }
 
@@ -508,7 +707,8 @@ mod tests {
         std::fs::write(&legacy, b"old").unwrap();
         let new = lib.new_staging("deezer:1").unwrap().join("audio.m4a");
         std::fs::write(&new, b"new").unwrap();
-        lib.publish("deezer:1", &new, &meta(), Some(legacy.to_str().unwrap())).unwrap();
+        lib.publish("deezer:1", &new, &meta(), Some(legacy.to_str().unwrap()))
+            .unwrap();
         assert!(!music.join("Old").exists());
         assert!(music.is_dir());
     }
@@ -523,7 +723,8 @@ mod tests {
         let sneaky = music.join("../precious.m4a");
         let new = lib.new_staging("deezer:1").unwrap().join("audio.m4a");
         std::fs::write(&new, b"new").unwrap();
-        lib.publish("deezer:1", &new, &meta(), Some(sneaky.to_str().unwrap())).unwrap();
+        lib.publish("deezer:1", &new, &meta(), Some(sneaky.to_str().unwrap()))
+            .unwrap();
         assert!(outside.exists());
         assert!(!lib.contains(&music), "the root itself is not inside");
         assert!(lib.publish("L1", &new, &meta(), None).is_err());
@@ -540,11 +741,23 @@ mod tests {
         assert!(!old.exists());
     }
 
-    async fn env() -> (FakeNavidrome, Arc<Navidrome>, Arc<Store>, crate::testutil::Server, tempfile::TempDir) {
+    async fn env() -> (
+        FakeNavidrome,
+        Arc<Navidrome>,
+        Arc<Store>,
+        crate::testutil::Server,
+        tempfile::TempDir,
+    ) {
         let fake = FakeNavidrome::default();
         let server = serve(fake.router()).await;
         let nav = Arc::new(Navidrome::new(&server.url, 60.0));
-        (fake, nav, Arc::new(Store::memory()), server, tempfile::tempdir().unwrap())
+        (
+            fake,
+            nav,
+            Arc::new(Store::memory()),
+            server,
+            tempfile::tempdir().unwrap(),
+        )
     }
 
     fn creds() -> CredentialsProvider {
@@ -561,8 +774,17 @@ mod tests {
     fn ready(store: &Store, dir: &Path, i: u64, size: usize) -> PathBuf {
         let f = dir.join(format!("deezer-{i}.m4a"));
         std::fs::write(&f, vec![b'x'; size]).unwrap();
-        store.remember_track(&format!("deezer:{i}"), &m(json!({"title": "Same Title", "artists": ["A"], "duration": 200})));
-        store.update_track(&format!("deezer:{i}"), &[Field::status("ready"), Field::File(Some(f.display().to_string()))]);
+        store.remember_track(
+            &format!("deezer:{i}"),
+            &m(json!({"title": "Same Title", "artists": ["A"], "duration": 200})),
+        );
+        store.update_track(
+            &format!("deezer:{i}"),
+            &[
+                Field::status("ready"),
+                Field::File(Some(f.display().to_string())),
+            ],
+        );
         f
     }
 
@@ -599,7 +821,13 @@ mod tests {
         indexer.stop().await;
         let mut got = mapped.lock().clone();
         got.sort();
-        assert_eq!(got, [("deezer:1".to_string(), "L1".to_string()), ("deezer:2".into(), "L2".into())]);
+        assert_eq!(
+            got,
+            [
+                ("deezer:1".to_string(), "L1".to_string()),
+                ("deezer:2".into(), "L2".into())
+            ]
+        );
         assert_eq!(fake.state.lock().scans, 1);
     }
 
@@ -619,8 +847,15 @@ mod tests {
         fake.add_song(sized("L1", "Same Title", 1001));
         indexer.iteration(&mut last_scan).await;
         assert_eq!(fake.state.lock().scans, 2);
-        assert_eq!(store.get_track("deezer:1").unwrap().local_id.as_deref(), Some("L1"));
-        assert_eq!(indexer.iteration(&mut last_scan).await, Duration::from_secs(60), "idle");
+        assert_eq!(
+            store.get_track("deezer:1").unwrap().local_id.as_deref(),
+            Some("L1")
+        );
+        assert_eq!(
+            indexer.iteration(&mut last_scan).await,
+            Duration::from_secs(60),
+            "idle"
+        );
     }
 
     #[tokio::test]
@@ -634,14 +869,23 @@ mod tests {
         let indexer = Indexer::new(store.clone(), nav.clone(), creds(), 0.0, None);
         let p = Params::parse("u=alice&p=alicepw", "");
         let track = store.get_track("deezer:1").unwrap();
-        assert_eq!(indexer.find_local_id(&track, &p).await.as_deref(), Some("P1"));
+        assert_eq!(
+            indexer.find_local_id(&track, &p).await.as_deref(),
+            Some("P1")
+        );
         // No size or path hit: title + album + duration must be unique.
         fake.state.lock().songs.clear();
         fake.add_song(nd_song("P3", "Same Title", "A", "Album", "al1"));
         fake.add_song(nd_song("P4", "Same Title", "A", "Other", "al2"));
-        store.remember_track("deezer:1", &m(json!({"title": "Same Title", "artists": ["A"], "album": "Album", "duration": 200})));
+        store.remember_track(
+            "deezer:1",
+            &m(json!({"title": "Same Title", "artists": ["A"], "album": "Album", "duration": 200})),
+        );
         let track = store.get_track("deezer:1").unwrap();
-        assert_eq!(indexer.find_local_id(&track, &p).await.as_deref(), Some("P3"));
+        assert_eq!(
+            indexer.find_local_id(&track, &p).await.as_deref(),
+            Some("P3")
+        );
         std::fs::remove_file(f).unwrap();
         assert_eq!(indexer.find_local_id(&track, &p).await, None, "file gone");
     }
@@ -650,7 +894,13 @@ mod tests {
     async fn find_local_id_without_credentials_is_none() {
         let (_fake, nav, store, _s, _dir) = env().await;
         store.remember_track("deezer:1", &m(json!({"title": "x"})));
-        store.update_track("deezer:1", &[Field::status("ready"), Field::File(Some("/music/deezer-1.m4a".into()))]);
+        store.update_track(
+            "deezer:1",
+            &[
+                Field::status("ready"),
+                Field::File(Some("/music/deezer-1.m4a".into())),
+            ],
+        );
         let indexer = Indexer::new(store.clone(), nav, Arc::new(|| None), 0.0, None);
         assert_eq!(indexer.resolve(&store.ready_without_local_id(200)).await, 0);
         indexer.scan().await;

@@ -33,7 +33,10 @@ impl Call {
     }
 
     pub fn is_json(&self) -> bool {
-        matches!(self.params.get_or("f", "xml").to_lowercase().as_str(), "json" | "jsonp")
+        matches!(
+            self.params.get_or("f", "xml").to_lowercase().as_str(),
+            "json" | "jsonp"
+        )
     }
 
     pub fn creds(&self) -> Params {
@@ -52,7 +55,12 @@ impl Call {
     }
 
     pub fn error(&self, s: &Services, code: i64, message: &str) -> Response {
-        let (body, ctype) = sr::error(&s.navidrome.identity(), &self.params.simple(), code, message);
+        let (body, ctype) = sr::error(
+            &s.navidrome.identity(),
+            &self.params.simple(),
+            code,
+            message,
+        );
         ([(header::CONTENT_TYPE, ctype)], body).into_response()
     }
 
@@ -61,10 +69,22 @@ impl Call {
     }
 
     /// Relay this call to Navidrome as `path?query` (parameters rewritten, no body).
-    pub async fn relay(&self, s: &Services, path: &str, query: &Params) -> Result<Response, NdError> {
+    pub async fn relay(
+        &self,
+        s: &Services,
+        path: &str,
+        query: &Params,
+    ) -> Result<Response, NdError> {
         let target = format!("{path}?{}", query.encode());
-        let incoming = Incoming { method: &self.http_method, path_and_query: &target, headers: &self.headers, remote: self.remote };
-        s.navidrome.passthrough(incoming, reqwest::Body::from(Vec::new())).await
+        let incoming = Incoming {
+            method: &self.http_method,
+            path_and_query: &target,
+            headers: &self.headers,
+            remote: self.remote,
+        };
+        s.navidrome
+            .passthrough(incoming, reqwest::Body::from(Vec::new()))
+            .await
     }
 }
 

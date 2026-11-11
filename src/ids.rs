@@ -43,13 +43,20 @@ impl VirtualId {
 
 impl fmt::Display for VirtualId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let prefix = PREFIXES.iter().find(|(_, k)| *k == self.kind).map(|(p, _)| *p).unwrap_or("");
+        let prefix = PREFIXES
+            .iter()
+            .find(|(_, k)| *k == self.kind)
+            .map(|(p, _)| *p)
+            .unwrap_or("");
         write!(f, "{prefix}{}", self.key)
     }
 }
 
 pub fn valid_youtube_id(id: &str) -> bool {
-    id.len() == 11 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    id.len() == 11
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
 fn numeric(key: &str) -> bool {
@@ -60,8 +67,15 @@ fn numeric(key: &str) -> bool {
 pub fn parse(value: &str) -> Option<VirtualId> {
     let (prefix, kind) = PREFIXES.iter().find(|(p, _)| value.starts_with(p))?;
     let key = &value[prefix.len()..];
-    let valid = if *kind == Kind::Youtube { valid_youtube_id(key) } else { numeric(key) };
-    valid.then(|| VirtualId { kind: *kind, key: key.to_string() })
+    let valid = if *kind == Kind::Youtube {
+        valid_youtube_id(key)
+    } else {
+        numeric(key)
+    };
+    valid.then(|| VirtualId {
+        kind: *kind,
+        key: key.to_string(),
+    })
 }
 
 pub fn is_virtual(value: &str) -> bool {
@@ -105,7 +119,15 @@ mod tests {
 
     #[test]
     fn rejects_malformed_and_local_ids() {
-        for bad in ["", "deezer:", "deezer:abc", "yt:short", "yt:dQw4w9WgXcQx", "4f2c9a", "deezer:1/../2"] {
+        for bad in [
+            "",
+            "deezer:",
+            "deezer:abc",
+            "yt:short",
+            "yt:dQw4w9WgXcQx",
+            "4f2c9a",
+            "deezer:1/../2",
+        ] {
             assert!(parse(bad).is_none(), "{bad}");
         }
         assert!(parse(&format!("deezer:{}", "1".repeat(21))).is_none());
@@ -113,7 +135,13 @@ mod tests {
 
     #[test]
     fn round_trips() {
-        for id in ["deezer:1", "deezer-album:2", "deezer-artist:3", "yt:dQw4w9WgXcQ", "sc:4"] {
+        for id in [
+            "deezer:1",
+            "deezer-album:2",
+            "deezer-artist:3",
+            "yt:dQw4w9WgXcQ",
+            "sc:4",
+        ] {
             assert_eq!(parse(id).unwrap().to_string(), id);
         }
         assert_eq!(track(7), "deezer:7");

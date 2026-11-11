@@ -27,7 +27,11 @@ fn values(items: Vec<Json>) -> Vec<Value> {
 
 /// The stored track for an external id, fetching unknown Deezer ids on demand.
 pub async fn ensure_track(s: &Services, track_id: &str) -> Option<Track> {
-    if let Some(t) = s.store.get_track(&s.identity.canonical(track_id)).or_else(|| s.store.get_track(track_id)) {
+    if let Some(t) = s
+        .store
+        .get_track(&s.identity.canonical(track_id))
+        .or_else(|| s.store.get_track(track_id))
+    {
         return Some(t);
     }
     let vid = ids::parse(track_id).filter(|v| v.kind == Kind::Track)?;
@@ -42,20 +46,37 @@ pub async fn get_song(s: &Arc<Services>, call: &Call) -> Reply {
     if !ids::parse(song_id).is_some_and(|v| v.is_track()) {
         return Ok(None);
     }
-    let Some(track) = ensure_track(s, song_id).await else { return Ok(Some(call.not_found(s, "Song"))) };
+    let Some(track) = ensure_track(s, song_id).await else {
+        return Ok(Some(call.not_found(s, "Song")));
+    };
     let starred = s.catalog.starred_map(call.username()).get(song_id).copied();
-    Ok(Some(call.ok_with(s, "song", Value::Object(s.catalog.virtual_song(song_id, &track, starred)))))
+    Ok(Some(call.ok_with(
+        s,
+        "song",
+        Value::Object(s.catalog.virtual_song(song_id, &track, starred)),
+    )))
 }
 
 // ------------------------------------------------------------------ albums
 /// The Navidrome album that already holds tracks of a Deezer album, if any.
-pub async fn local_album_id(s: &Services, deezer_album_id: &str, creds: &Params) -> Result<Option<String>, NdError> {
+pub async fn local_album_id(
+    s: &Services,
+    deezer_album_id: &str,
+    creds: &Params,
+) -> Result<Option<String>, NdError> {
     let cache_key = format!("local-album:{deezer_album_id}");
-    if let Some(cached) = s.store.cache_get(&cache_key).and_then(|v| opt_str(Some(&v))).filter(|v| !v.is_empty()) {
+    if let Some(cached) = s
+        .store
+        .cache_get(&cache_key)
+        .and_then(|v| opt_str(Some(&v)))
+        .filter(|v| !v.is_empty())
+    {
         return Ok(Some(cached));
     }
     let has_local = s.store.tracks_in_album(deezer_album_id).iter().any(|x| {
-        s.store.get_track(&s.identity.canonical(&x.id)).is_some_and(|t| t.local_id.is_some() && t.is_ready())
+        s.store
+            .get_track(&s.identity.canonical(&x.id))
+            .is_some_and(|t| t.local_id.is_some() && t.is_ready())
     });
     if !has_local {
         return Ok(None);
@@ -63,13 +84,25 @@ pub async fn local_album_id(s: &Services, deezer_album_id: &str, creds: &Params)
     let album_id = s.intents.local_album(deezer_album_id, creds).await?;
     if let Some(id) = &album_id {
         s.store.cache_set(&cache_key, &json!(id), 7.0 * DAY);
-        s.store.cache_set(&format!("deezer-album-for:{id}"), &json!(deezer_album_id), 30.0 * DAY);
+        s.store.cache_set(
+            &format!("deezer-album-for:{id}"),
+            &json!(deezer_album_id),
+            30.0 * DAY,
+        );
     }
     Ok(album_id)
 }
 
-pub async fn local_album_object(s: &Services, local_id: &str, creds: &Params) -> Result<Option<Json>, NdError> {
-    match s.navidrome.call("getAlbum", creds, &[("id", local_id)]).await {
+pub async fn local_album_object(
+    s: &Services,
+    local_id: &str,
+    creds: &Params,
+) -> Result<Option<Json>, NdError> {
+    match s
+        .navidrome
+        .call("getAlbum", creds, &[("id", local_id)])
+        .await
+    {
         Ok(root) => Ok(root.get("album").and_then(Value::as_object).cloned()),
         Err(NdError::Upstream { .. }) => Ok(None),
         Err(e) => Err(e),
@@ -82,7 +115,11 @@ fn listing(mut album: Json) -> Json {
 }
 
 /// AlbumID3 entries for Deezer album rows, local albums replacing their catalog twin.
-pub async fn merge_with_local(s: &Services, call: &Call, rows: Vec<Json>) -> Result<Vec<Json>, NdError> {
+pub async fn merge_with_local(
+    s: &Services,
+    call: &Call,
+    rows: Vec<Json>,
+) -> Result<Vec<Json>, NdError> {
     let creds = call.creds();
     let one = |row: Json| {
         let creds = &creds;
@@ -101,7 +138,12 @@ pub async fn merge_with_local(s: &Services, call: &Call, rows: Vec<Json>) -> Res
 
 /// One entry per album title: the edition with most tracks, explicit preferred.
 pub fn dedupe_editions(albums: Vec<Json>) -> Vec<Json> {
-    let rank = |a: &Json| (as_uint(a.get("nb_tracks")), truthy(a.get("explicit_lyrics")));
+    let rank = |a: &Json| {
+        (
+            as_uint(a.get("nb_tracks")),
+            truthy(a.get("explicit_lyrics")),
+        )
+    };
     let mut best: Vec<(String, Json)> = Vec::new();
     for album in albums {
         let key = matching::normalize(&as_str(album.get("title")));
@@ -120,11 +162,24 @@ pub fn dedupe_editions(albums: Vec<Json>) -> Vec<Json> {
 }
 
 async fn virtual_album(s: &Services, call: &Call, album_id: &str) -> Option<Json> {
-    let (data, rows) = tokio::try_join!(s.deezer.album(album_id), s.deezer.album_tracks(album_id)).ok()?;
+    let (data, rows) =
+        tokio::try_join!(s.deezer.album(album_id), s.deezer.album_tracks(album_id)).ok()?;
     let track_ids = s.catalog.remember_deezer(&rows, Some(&data));
-    let songs = s.catalog.present(&track_ids, &call.creds(), &HashSet::new()).await;
-    let starred = s.catalog.starred_map(call.username()).get(&ids::album(album_id)).copied();
-    Some(models::album(&ids::album(album_id), &data, Some(values(songs)), starred))
+    let songs = s
+        .catalog
+        .present(&track_ids, &call.creds(), &HashSet::new())
+        .await;
+    let starred = s
+        .catalog
+        .starred_map(call.username())
+        .get(&ids::album(album_id))
+        .copied();
+    Some(models::album(
+        &ids::album(album_id),
+        &data,
+        Some(values(songs)),
+        starred,
+    ))
 }
 
 pub async fn get_album(s: &Arc<Services>, call: &Call) -> Reply {
@@ -149,7 +204,11 @@ pub async fn get_album(s: &Arc<Services>, call: &Call) -> Reply {
     if !(s.settings.complete_local_albums && call.is_json()) {
         return Ok(None);
     }
-    let mut album = match s.navidrome.call("getAlbum", &call.params, &[("id", album_id)]).await {
+    let mut album = match s
+        .navidrome
+        .call("getAlbum", &call.params, &[("id", album_id)])
+        .await
+    {
         Ok(root) => obj(root.get("album")),
         Err(NdError::Upstream { .. }) => return Ok(None),
         Err(e) => return Err(e),
@@ -165,13 +224,27 @@ pub async fn get_album(s: &Arc<Services>, call: &Call) -> Reply {
 /// in the background (rate limited) and completed on the next open. That keeps a
 /// client's full library sync (one getAlbum per album) cheap. Albums that were in
 /// the library before the proxy are associated with the catalog by name.
-pub async fn complete_album(s: &Arc<Services>, call: &Call, album: &mut Json, deezer_album: Option<String>, fetch: bool) -> usize {
-    let songs: Vec<Json> = album.get("song").and_then(Value::as_array).into_iter().flatten().filter_map(|x| x.as_object().cloned()).collect();
+pub async fn complete_album(
+    s: &Arc<Services>,
+    call: &Call,
+    album: &mut Json,
+    deezer_album: Option<String>,
+    fetch: bool,
+) -> usize {
+    let songs: Vec<Json> = album
+        .get("song")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|x| x.as_object().cloned())
+        .collect();
     let song_ids: Vec<String> = songs.iter().map(|x| as_str(x.get("id"))).collect();
     let deezer_album = match deezer_album {
         Some(d) => d,
         None => {
-            let mapped = s.store.tracks_by_local_ids(song_ids.iter().map(String::as_str));
+            let mapped = s
+                .store
+                .tracks_by_local_ids(song_ids.iter().map(String::as_str));
             let mut counts: Vec<(String, usize)> = Vec::new();
             for id in &song_ids {
                 if let Some(a) = mapped.get(id).and_then(|t| t.album_id.clone()) {
@@ -188,8 +261,14 @@ pub async fn complete_album(s: &Arc<Services>, call: &Call, album: &mut Json, de
                     let local_id = as_str(album.get("id"));
                     match s.store.cache_get(&format!("deezer-album-for:{local_id}")) {
                         None => {
-                            let (me, name, artist) = (s.clone(), as_str(album.get("name")), as_str(album.get("artist")));
-                            s.background.spawn(async move { associate(&me, &local_id, &name, &artist).await });
+                            let (me, name, artist) = (
+                                s.clone(),
+                                as_str(album.get("name")),
+                                as_str(album.get("artist")),
+                            );
+                            s.background.spawn(async move {
+                                associate(&me, &local_id, &name, &artist).await
+                            });
                             return 0;
                         }
                         Some(v) => match opt_str(Some(&v)).filter(|v| !v.is_empty()) {
@@ -205,10 +284,16 @@ pub async fn complete_album(s: &Arc<Services>, call: &Call, album: &mut Json, de
         Some(rows) => rows,
         None if !fetch => {
             let me = s.clone();
-            s.background.spawn(async move { warm_album(&me, &deezer_album).await });
+            s.background
+                .spawn(async move { warm_album(&me, &deezer_album).await });
             return 0;
         }
-        None => match async { s.deezer.album(&deezer_album).await?; s.deezer.album_tracks(&deezer_album).await }.await {
+        None => match async {
+            s.deezer.album(&deezer_album).await?;
+            s.deezer.album_tracks(&deezer_album).await
+        }
+        .await
+        {
             Ok(rows) => rows,
             Err(_) => return 0,
         },
@@ -217,20 +302,29 @@ pub async fn complete_album(s: &Arc<Services>, call: &Call, album: &mut Json, de
     let track_ids = s.catalog.remember_deezer(&rows, data.as_ref());
     let canonical = s.identity.canonical_many(&track_ids);
     let have_local: HashSet<String> = song_ids.iter().cloned().collect();
-    let have_titles: HashSet<String> = songs.iter().map(|x| matching::base_title(&as_str(x.get("title")))).collect();
+    let have_titles: HashSet<String> = songs
+        .iter()
+        .map(|x| matching::base_title(&as_str(x.get("title"))))
+        .collect();
     let tracks = s.store.get_tracks(canonical.values().map(String::as_str));
     let missing: Vec<String> = track_ids
         .iter()
         .filter(|id| {
-            let Some(t) = canonical.get(*id).and_then(|c| tracks.get(c)) else { return false };
-            !(t.local_id.as_ref().is_some_and(|l| have_local.contains(l)) || have_titles.contains(&matching::base_title(&t.title())))
+            let Some(t) = canonical.get(*id).and_then(|c| tracks.get(c)) else {
+                return false;
+            };
+            !(t.local_id.as_ref().is_some_and(|l| have_local.contains(l))
+                || have_titles.contains(&matching::base_title(&t.title())))
         })
         .cloned()
         .collect();
     if missing.is_empty() {
         return 0;
     }
-    let extra = s.catalog.present(&missing, &call.creds(), &have_local).await;
+    let extra = s
+        .catalog
+        .present(&missing, &call.creds(), &have_local)
+        .await;
     let added = extra.len();
     let mut merged: Vec<Json> = songs.into_iter().chain(extra).collect();
     merged.sort_by_key(|x| {
@@ -253,13 +347,24 @@ async fn associate(s: &Services, local_album: &str, name: &str, artist: &str) {
     if name.is_empty() || s.store.cache_get(&key).is_some() {
         return;
     }
-    let Ok(_permit) = LOOKUPS.acquire().await else { return };
-    let Ok(rows) = s.deezer.search_albums(format!("{artist} {name}").trim(), 10).await else { return };
+    let Ok(_permit) = LOOKUPS.acquire().await else {
+        return;
+    };
+    let Ok(rows) = s
+        .deezer
+        .search_albums(format!("{artist} {name}").trim(), 10)
+        .await
+    else {
+        return;
+    };
     let found = rows
         .iter()
         .find(|row| {
             matching::normalize(&as_str(row.get("title"))) == matching::normalize(name)
-                && matching::artists_match(&[artist.to_string()], Credits::Text(&as_str(obj(row.get("artist")).get("name")))) == 1.0
+                && matching::artists_match(
+                    &[artist.to_string()],
+                    Credits::Text(&as_str(obj(row.get("artist")).get("name"))),
+                ) == 1.0
         })
         .map(|row| as_str(row.get("id")))
         .unwrap_or_default();
@@ -270,14 +375,28 @@ async fn associate(s: &Services, local_album: &str, name: &str, artist: &str) {
 }
 
 async fn warm_album(s: &Services, album_id: &str) {
-    if let Err(e) = async { s.deezer.album(album_id).await?; s.deezer.album_tracks(album_id).await }.await {
+    if let Err(e) = async {
+        s.deezer.album(album_id).await?;
+        s.deezer.album_tracks(album_id).await
+    }
+    .await
+    {
         tracing::debug!("album {album_id} warm-up failed: {e}");
     }
 }
 
 // ----------------------------------------------------------------- artists
-async fn virtual_artist(s: &Services, call: &Call, artist_id: &str) -> Result<Option<Json>, NdError> {
-    let Ok((data, albums)) = tokio::try_join!(s.deezer.artist(artist_id), s.deezer.artist_albums(artist_id)) else { return Ok(None) };
+async fn virtual_artist(
+    s: &Services,
+    call: &Call,
+    artist_id: &str,
+) -> Result<Option<Json>, NdError> {
+    let Ok((data, albums)) = tokio::try_join!(
+        s.deezer.artist(artist_id),
+        s.deezer.artist_albums(artist_id)
+    ) else {
+        return Ok(None);
+    };
     let rows: Vec<Json> = dedupe_editions(albums)
         .into_iter()
         .map(|mut a| {
@@ -288,8 +407,17 @@ async fn virtual_artist(s: &Services, call: &Call, artist_id: &str) -> Result<Op
         })
         .collect();
     let listed = merge_with_local(s, call, rows).await?;
-    let starred = s.catalog.starred_map(call.username()).get(&ids::artist(artist_id)).copied();
-    Ok(Some(models::artist(&ids::artist(artist_id), &data, Some(values(listed)), starred)))
+    let starred = s
+        .catalog
+        .starred_map(call.username())
+        .get(&ids::artist(artist_id))
+        .copied();
+    Ok(Some(models::artist(
+        &ids::artist(artist_id),
+        &data,
+        Some(values(listed)),
+        starred,
+    )))
 }
 
 pub async fn get_artist(s: &Arc<Services>, call: &Call) -> Reply {
@@ -306,7 +434,11 @@ pub async fn get_artist(s: &Arc<Services>, call: &Call) -> Reply {
     if !(s.settings.complete_local_albums && call.is_json()) {
         return Ok(None);
     }
-    let mut artist = match s.navidrome.call("getArtist", &call.params, &[("id", artist_id)]).await {
+    let mut artist = match s
+        .navidrome
+        .call("getArtist", &call.params, &[("id", artist_id)])
+        .await
+    {
         Ok(root) => obj(root.get("artist")),
         Err(NdError::Upstream { .. }) => return Ok(None),
         Err(e) => return Err(e),
@@ -320,14 +452,30 @@ async fn find_deezer_artist(s: &Services, name: &str) -> Result<Option<Json>, De
     if wanted.is_empty() {
         return Ok(None);
     }
-    Ok(s.deezer.search_artists(name, 5).await?.into_iter().find(|row| matching::normalize(&as_str(row.get("name"))) == wanted))
+    Ok(s.deezer
+        .search_artists(name, 5)
+        .await?
+        .into_iter()
+        .find(|row| matching::normalize(&as_str(row.get("name"))) == wanted))
 }
 
 /// Append catalog albums a local artist does not have yet.
 async fn complete_artist(s: &Services, artist: &mut Json) -> Result<usize, DeezerError> {
-    let Some(found) = find_deezer_artist(s, &as_str(artist.get("name"))).await? else { return Ok(0) };
-    let local: Vec<Value> = artist.get("album").and_then(Value::as_array).into_iter().flatten().filter(|a| a.is_object()).cloned().collect();
-    let have: HashSet<String> = local.iter().map(|a| matching::normalize(&as_str(a.get("name")))).collect();
+    let Some(found) = find_deezer_artist(s, &as_str(artist.get("name"))).await? else {
+        return Ok(0);
+    };
+    let local: Vec<Value> = artist
+        .get("album")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|a| a.is_object())
+        .cloned()
+        .collect();
+    let have: HashSet<String> = local
+        .iter()
+        .map(|a| matching::normalize(&as_str(a.get("name"))))
+        .collect();
     let mut extra = Vec::new();
     for mut row in dedupe_editions(s.deezer.artist_albums(&as_str(found.get("id"))).await?) {
         if have.contains(&matching::normalize(&as_str(row.get("title")))) {
@@ -336,7 +484,12 @@ async fn complete_artist(s: &Services, artist: &mut Json) -> Result<usize, Deeze
         if !truthy(row.get("artist")) {
             row.insert("artist".into(), Value::Object(found.clone()));
         }
-        extra.push(Value::Object(models::album(&ids::album(as_str(row.get("id"))), &row, None, None)));
+        extra.push(Value::Object(models::album(
+            &ids::album(as_str(row.get("id"))),
+            &row,
+            None,
+            None,
+        )));
     }
     if extra.is_empty() {
         return Ok(0);
@@ -351,7 +504,10 @@ async fn complete_artist(s: &Services, artist: &mut Json) -> Result<usize, Deeze
 fn images(item: &Json, kind: &str) -> Json {
     let md5 = as_str(item.get("md5_image"));
     let image_kind = if kind == "picture" { "artist" } else { "cover" };
-    let pick = |size: u32, suffix: &str| deezer::cover_url(&md5, size, image_kind).unwrap_or_else(|| as_str(item.get(&format!("{kind}_{suffix}"))));
+    let pick = |size: u32, suffix: &str| {
+        deezer::cover_url(&md5, size, image_kind)
+            .unwrap_or_else(|| as_str(item.get(&format!("{kind}_{suffix}"))))
+    };
     let v = json!({
         "smallImageUrl": pick(250, "medium"),
         "mediumImageUrl": pick(500, "big"),
@@ -361,13 +517,22 @@ fn images(item: &Json, kind: &str) -> Json {
 }
 
 pub async fn get_artist_info(s: &Arc<Services>, call: &Call) -> Reply {
-    let Some(vid) = ids::parse(call.params.get("id")) else { return Ok(None) };
-    let key = if call.method == "getArtistInfo2" { "artistInfo2" } else { "artistInfo" };
+    let Some(vid) = ids::parse(call.params.get("id")) else {
+        return Ok(None);
+    };
+    let key = if call.method == "getArtistInfo2" {
+        "artistInfo2"
+    } else {
+        "artistInfo"
+    };
     if vid.kind != Kind::Artist {
         return Ok(Some(call.ok_with(s, key, json!({}))));
     }
     let count = call.params.int("count", 20).max(0) as usize;
-    let Ok((data, related)) = tokio::try_join!(s.deezer.artist(&vid.key), s.deezer.artist_related(&vid.key, count)) else {
+    let Ok((data, related)) = tokio::try_join!(
+        s.deezer.artist(&vid.key),
+        s.deezer.artist_related(&vid.key, count)
+    ) else {
         return Ok(Some(call.ok_with(s, key, json!({}))));
     };
     let mut info = Json::new();
@@ -375,18 +540,32 @@ pub async fn get_artist_info(s: &Arc<Services>, call: &Call) -> Reply {
     info.insert("musicBrainzId".into(), json!(""));
     info.insert("lastFmUrl".into(), json!(""));
     info.extend(images(&data, "picture"));
-    let similar: Vec<Value> = related.iter().map(|a| Value::Object(models::artist(&ids::artist(as_str(a.get("id"))), a, None, None))).collect();
+    let similar: Vec<Value> = related
+        .iter()
+        .map(|a| {
+            Value::Object(models::artist(
+                &ids::artist(as_str(a.get("id"))),
+                a,
+                None,
+                None,
+            ))
+        })
+        .collect();
     info.insert("similarArtist".into(), Value::Array(similar));
     Ok(Some(call.ok_with(s, key, Value::Object(info))))
 }
 
 pub async fn get_album_info(s: &Arc<Services>, call: &Call) -> Reply {
-    let Some(vid) = ids::parse(call.params.get("id")) else { return Ok(None) };
+    let Some(vid) = ids::parse(call.params.get("id")) else {
+        return Ok(None);
+    };
     let key = "albumInfo";
     if vid.kind != Kind::Album {
         return Ok(Some(call.ok_with(s, key, json!({}))));
     }
-    let Ok(data) = s.deezer.album(&vid.key).await else { return Ok(Some(call.ok_with(s, key, json!({})))) };
+    let Ok(data) = s.deezer.album(&vid.key).await else {
+        return Ok(Some(call.ok_with(s, key, json!({}))));
+    };
     let mut info = Json::new();
     info.insert("notes".into(), json!(""));
     info.insert("musicBrainzId".into(), json!(""));
@@ -398,28 +577,60 @@ pub async fn get_album_info(s: &Arc<Services>, call: &Call) -> Reply {
 pub async fn get_top_songs(s: &Arc<Services>, call: &Call) -> Reply {
     let name = call.params.get("artist");
     let count = call.params.int("count", 50).max(0);
-    let local = match s.navidrome.call("getTopSongs", &call.params, &[("artist", name), ("count", &count.to_string())]).await {
+    let local = match s
+        .navidrome
+        .call(
+            "getTopSongs",
+            &call.params,
+            &[("artist", name), ("count", &count.to_string())],
+        )
+        .await
+    {
         Ok(root) => Some(root),
         Err(NdError::Upstream { .. }) => None,
         Err(e) => return Err(e),
     };
-    if let Some(root) = local.filter(|r| !crate::navidrome::songs_of(r.get("topSongs")).is_empty()) {
+    if let Some(root) = local.filter(|r| !crate::navidrome::songs_of(r.get("topSongs")).is_empty())
+    {
         // Already fetched: re-render JSON instead of asking Navidrome twice; XML clients get Navidrome's own bytes.
-        return Ok(call.is_json().then(|| call.ok_with(s, "topSongs", root.get("topSongs").cloned().unwrap_or(json!({})))));
+        return Ok(call.is_json().then(|| {
+            call.ok_with(
+                s,
+                "topSongs",
+                root.get("topSongs").cloned().unwrap_or(json!({})),
+            )
+        }));
     }
     let rows = match find_deezer_artist(s, name).await {
-        Ok(Some(found)) => s.deezer.artist_top(&as_str(found.get("id")), count.min(50) as usize).await.unwrap_or_default(),
+        Ok(Some(found)) => s
+            .deezer
+            .artist_top(&as_str(found.get("id")), count.min(50) as usize)
+            .await
+            .unwrap_or_default(),
         _ => vec![],
     };
     let track_ids = s.catalog.remember_deezer(&rows, None);
-    let songs = s.catalog.present(&track_ids, &call.creds(), &HashSet::new()).await;
-    let body = if songs.is_empty() { json!({}) } else { json!({"song": songs}) };
+    let songs = s
+        .catalog
+        .present(&track_ids, &call.creds(), &HashSet::new())
+        .await;
+    let body = if songs.is_empty() {
+        json!({})
+    } else {
+        json!({"song": songs})
+    };
     Ok(Some(call.ok_with(s, "topSongs", body)))
 }
 
 pub async fn get_similar_songs(s: &Arc<Services>, call: &Call) -> Reply {
-    let Some(vid) = ids::parse(call.params.get("id")) else { return Ok(None) };
-    let key = if call.method == "getSimilarSongs2" { "similarSongs2" } else { "similarSongs" };
+    let Some(vid) = ids::parse(call.params.get("id")) else {
+        return Ok(None);
+    };
+    let key = if call.method == "getSimilarSongs2" {
+        "similarSongs2"
+    } else {
+        "similarSongs"
+    };
     let mut rows = Vec::new();
     if vid.kind == Kind::Artist {
         let result: Result<(), DeezerError> = async {
@@ -435,8 +646,15 @@ pub async fn get_similar_songs(s: &Arc<Services>, call: &Call) -> Reply {
         }
     }
     let track_ids = s.catalog.remember_deezer(&rows, None);
-    let songs = s.catalog.present(&track_ids, &call.creds(), &HashSet::new()).await;
-    let body = if songs.is_empty() { json!({}) } else { json!({"song": songs}) };
+    let songs = s
+        .catalog
+        .present(&track_ids, &call.creds(), &HashSet::new())
+        .await;
+    let body = if songs.is_empty() {
+        json!({})
+    } else {
+        json!({"song": songs})
+    };
     Ok(Some(call.ok_with(s, key, body)))
 }
 
@@ -461,30 +679,46 @@ pub fn sized(url: &str, size: i64) -> String {
 
 pub async fn get_cover_art(s: &Arc<Services>, call: &Call) -> Reply {
     let art_id = call.params.get("id");
-    let Some(vid) = ids::parse(art_id) else { return Ok(None) };
+    let Some(vid) = ids::parse(art_id) else {
+        return Ok(None);
+    };
     let size = call.params.int("size", 0);
     let url = if vid.is_track() {
         let track = ensure_track(s, art_id).await;
-        let url = track.and_then(|t| opt_str(t.meta.get("cover"))).filter(|u| !u.is_empty());
+        let url = track
+            .and_then(|t| opt_str(t.meta.get("cover")))
+            .filter(|u| !u.is_empty());
         match (url, vid.kind) {
-            (None, Kind::Youtube) => Some(format!("https://i.ytimg.com/vi/{}/hqdefault.jpg", vid.key)),
+            (None, Kind::Youtube) => {
+                Some(format!("https://i.ytimg.com/vi/{}/hqdefault.jpg", vid.key))
+            }
             (url, _) => url,
         }
     } else if vid.kind == Kind::Album {
-        s.deezer.album(&vid.key).await.ok().and_then(|a| deezer::best_cover(&a))
-    } else {
         s.deezer
-            .artist(&vid.key)
+            .album(&vid.key)
             .await
             .ok()
-            .and_then(|a| deezer::cover_url(&as_str(a.get("md5_image")), 1000, "artist").or_else(|| opt_str(a.get("picture_xl"))))
+            .and_then(|a| deezer::best_cover(&a))
+    } else {
+        s.deezer.artist(&vid.key).await.ok().and_then(|a| {
+            deezer::cover_url(&as_str(a.get("md5_image")), 1000, "artist")
+                .or_else(|| opt_str(a.get("picture_xl")))
+        })
     };
     let found = match url {
         Some(url) => s.covers.get(&sized(&url, size)).await,
         None => None,
     };
     Ok(Some(match found {
-        Some((data, ctype)) => ([(header::CONTENT_TYPE, ctype), (header::CACHE_CONTROL, "public, max-age=604800")], data).into_response(),
+        Some((data, ctype)) => (
+            [
+                (header::CONTENT_TYPE, ctype),
+                (header::CACHE_CONTROL, "public, max-age=604800"),
+            ],
+            data,
+        )
+            .into_response(),
         None => (axum::http::StatusCode::NOT_FOUND, "cover not found").into_response(),
     }))
 }
@@ -494,11 +728,24 @@ pub async fn get_lyrics_by_song_id(s: &Arc<Services>, call: &Call) -> Reply {
     if ids::parse(id).is_none() {
         return Ok(None);
     }
-    if let Some(track) = s.store.get_track(&s.identity.canonical(id)).filter(|t| t.is_ready())
+    if let Some(track) = s
+        .store
+        .get_track(&s.identity.canonical(id))
+        .filter(|t| t.is_ready())
         && let Some(local_id) = track.local_id
     {
-        match s.navidrome.call("getLyricsBySongId", &call.params, &[("id", &local_id)]).await {
-            Ok(root) => return Ok(Some(call.ok_with(s, "lyricsList", root.get("lyricsList").cloned().unwrap_or(json!({}))))),
+        match s
+            .navidrome
+            .call("getLyricsBySongId", &call.params, &[("id", &local_id)])
+            .await
+        {
+            Ok(root) => {
+                return Ok(Some(call.ok_with(
+                    s,
+                    "lyricsList",
+                    root.get("lyricsList").cloned().unwrap_or(json!({})),
+                )));
+            }
             Err(NdError::Upstream { .. }) => {}
             Err(e) => return Err(e),
         }
@@ -513,10 +760,19 @@ mod tests {
     #[test]
     fn sized_picks_the_cdn_variant() {
         let url = "https://cdn/images/cover/x/1000x1000-000000-80-0-0.jpg";
-        assert_eq!(sized(url, 200), "https://cdn/images/cover/x/250x250-000000-80-0-0.jpg");
-        assert_eq!(sized(url, 300), "https://cdn/images/cover/x/500x500-000000-80-0-0.jpg");
+        assert_eq!(
+            sized(url, 200),
+            "https://cdn/images/cover/x/250x250-000000-80-0-0.jpg"
+        );
+        assert_eq!(
+            sized(url, 300),
+            "https://cdn/images/cover/x/500x500-000000-80-0-0.jpg"
+        );
         assert_eq!(sized(url, 0), url);
-        assert_eq!(sized("https://i.ytimg.com/vi/x/hqdefault.jpg", 100), "https://i.ytimg.com/vi/x/hqdefault.jpg");
+        assert_eq!(
+            sized("https://i.ytimg.com/vi/x/hqdefault.jpg", 100),
+            "https://i.ytimg.com/vi/x/hqdefault.jpg"
+        );
     }
 
     #[test]
@@ -524,7 +780,12 @@ mod tests {
         let a = |id: u64, title: &str, n: u64, explicit: bool, date: &str| {
             json!({"id": id, "title": title, "nb_tracks": n, "explicit_lyrics": explicit, "release_date": date}).as_object().cloned().unwrap()
         };
-        let out = dedupe_editions(vec![a(1, "RAW", 10, false, "2020"), a(2, "raw", 10, true, "2020"), a(3, "Old", 5, false, "2010"), a(4, "RAW", 3, true, "2021")]);
+        let out = dedupe_editions(vec![
+            a(1, "RAW", 10, false, "2020"),
+            a(2, "raw", 10, true, "2020"),
+            a(3, "Old", 5, false, "2010"),
+            a(4, "RAW", 3, true, "2021"),
+        ]);
         let ids: Vec<i64> = out.iter().map(|x| x["id"].as_i64().unwrap()).collect();
         assert_eq!(ids, [2, 3]);
     }

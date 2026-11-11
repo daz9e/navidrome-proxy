@@ -12,14 +12,16 @@
 //! All functions are blocking file I/O; async callers use `spawn_blocking`.
 
 use crate::util::{Json, as_str, as_uint};
+use lofty::TextEncoding;
 use lofty::config::{ParseOptions, WriteOptions};
 use lofty::file::{AudioFile, TaggedFileExt};
-use lofty::id3::v2::{AttachedPictureFrame, ExtendedTextFrame, Frame, FrameId, Id3v2Tag, TextInformationFrame};
+use lofty::id3::v2::{
+    AttachedPictureFrame, ExtendedTextFrame, Frame, FrameId, Id3v2Tag, TextInformationFrame,
+};
 use lofty::mp4::{AdvisoryRating, Atom, AtomData, AtomIdent, DataType, Ilst, Mp4File};
 use lofty::mpeg::MpegFile;
 use lofty::picture::{MimeType, Picture, PictureType};
 use lofty::tag::{ItemKey, TagExt};
-use lofty::TextEncoding;
 use serde_json::Value;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -59,24 +61,43 @@ fn picture(cover: &[u8]) -> Option<Picture> {
         tracing::warn!("not embedding cover: not JPEG/PNG ({} bytes)", cover.len());
         return None;
     };
-    Some(Picture::new_unchecked(PictureType::CoverFront, Some(mime), Some("Cover".into()), cover.to_vec()))
+    Some(Picture::new_unchecked(
+        PictureType::CoverFront,
+        Some(mime),
+        Some("Cover".into()),
+        cover.to_vec(),
+    ))
 }
 
 fn suffix(path: &Path) -> String {
-    path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase()
+    path.extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase()
 }
 
 fn itunes(name: &'static str) -> AtomIdent<'static> {
-    AtomIdent::Freeform { mean: Cow::Borrowed("com.apple.iTunes"), name: Cow::Borrowed(name) }
+    AtomIdent::Freeform {
+        mean: Cow::Borrowed("com.apple.iTunes"),
+        name: Cow::Borrowed(name),
+    }
 }
 
 fn text_frame(id: &'static str, value: String) -> Frame<'static> {
-    Frame::Text(TextInformationFrame::new(FrameId::Valid(Cow::Borrowed(id)), TextEncoding::UTF8, value))
+    Frame::Text(TextInformationFrame::new(
+        FrameId::Valid(Cow::Borrowed(id)),
+        TextEncoding::UTF8,
+        value,
+    ))
 }
 
 fn user_text(desc: &str, values: &[String]) -> Frame<'static> {
     // ID3v2.4 separates multiple values with NUL.
-    Frame::UserText(ExtendedTextFrame::new(TextEncoding::UTF8, desc.into(), values.join("\0")))
+    Frame::UserText(ExtendedTextFrame::new(
+        TextEncoding::UTF8,
+        desc.into(),
+        values.join("\0"),
+    ))
 }
 
 fn picture_frame(pic: Picture) -> Frame<'static> {
@@ -90,14 +111,23 @@ pub fn write_tags(path: &Path, meta: &Json, cover: Option<&[u8]>) -> Result<(), 
     let mut artists: Vec<String> = meta
         .get("artists")
         .and_then(Value::as_array)
-        .map(|a| a.iter().map(|v| as_str(Some(v))).filter(|s| !s.is_empty()).collect())
+        .map(|a| {
+            a.iter()
+                .map(|v| as_str(Some(v)))
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
         .unwrap_or_default();
     if artists.is_empty() && !text("artist").is_empty() {
         artists.push(text("artist"));
     }
-    let display = Some(text("artist")).filter(|s| !s.is_empty()).unwrap_or_else(|| artists.join(", "));
+    let display = Some(text("artist"))
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| artists.join(", "));
     let album = text("album");
-    let album_artist = Some(text("album_artist")).filter(|s| !s.is_empty()).unwrap_or_else(|| artists.first().cloned().unwrap_or_default());
+    let album_artist = Some(text("album_artist"))
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| artists.first().cloned().unwrap_or_default());
     let track = as_uint(meta.get("track")).min(u16::MAX as i64) as u16;
     let total = as_uint(meta.get("track_total")).min(u16::MAX as i64) as u16;
     let disc = match as_uint(meta.get("disc")).min(u16::MAX as i64) as u16 {
@@ -114,7 +144,9 @@ pub fn write_tags(path: &Path, meta: &Json, cover: Option<&[u8]>) -> Result<(), 
         "m4a" => {
             // A fresh ilst replaces every existing atom (ffmpeg's encoder tag too).
             let mut tags = Ilst::new();
-            let utf8 = |tags: &mut Ilst, ident: AtomIdent<'static>, v: String| tags.insert(Atom::new(ident, AtomData::UTF8(v)));
+            let utf8 = |tags: &mut Ilst, ident: AtomIdent<'static>, v: String| {
+                tags.insert(Atom::new(ident, AtomData::UTF8(v)))
+            };
             let pair = |a: u16, b: u16, pad: bool| {
                 let mut v = vec![0, 0];
                 v.extend(a.to_be_bytes());
@@ -122,11 +154,17 @@ pub fn write_tags(path: &Path, meta: &Json, cover: Option<&[u8]>) -> Result<(), 
                 if pad {
                     v.extend([0, 0]);
                 }
-                AtomData::Unknown { code: DataType::Reserved, data: v }
+                AtomData::Unknown {
+                    code: DataType::Reserved,
+                    data: v,
+                }
             };
             utf8(&mut tags, AtomIdent::Fourcc(*b"\xa9nam"), title);
             utf8(&mut tags, AtomIdent::Fourcc(*b"\xa9ART"), display);
-            if let Some(atom) = Atom::from_collection(itunes("ARTISTS"), artists.into_iter().map(AtomData::UTF8).collect()) {
+            if let Some(atom) = Atom::from_collection(
+                itunes("ARTISTS"),
+                artists.into_iter().map(AtomData::UTF8).collect(),
+            ) {
                 tags.insert(atom);
             }
             if !album.is_empty() {
@@ -134,7 +172,10 @@ pub fn write_tags(path: &Path, meta: &Json, cover: Option<&[u8]>) -> Result<(), 
                 utf8(&mut tags, AtomIdent::Fourcc(*b"aART"), album_artist);
             }
             if track > 0 {
-                tags.insert(Atom::new(AtomIdent::Fourcc(*b"trkn"), pair(track, total, true)));
+                tags.insert(Atom::new(
+                    AtomIdent::Fourcc(*b"trkn"),
+                    pair(track, total, true),
+                ));
             }
             tags.insert(Atom::new(AtomIdent::Fourcc(*b"disk"), pair(disc, 0, false)));
             if !year.is_empty() {
@@ -167,7 +208,14 @@ pub fn write_tags(path: &Path, meta: &Json, cover: Option<&[u8]>) -> Result<(), 
                 tags.insert(text_frame("TPE2", album_artist));
             }
             if track > 0 {
-                tags.insert(text_frame("TRCK", if total > 0 { format!("{track}/{total}") } else { track.to_string() }));
+                tags.insert(text_frame(
+                    "TRCK",
+                    if total > 0 {
+                        format!("{track}/{total}")
+                    } else {
+                        track.to_string()
+                    },
+                ));
             }
             tags.insert(text_frame("TPOS", disc.to_string()));
             if !year.is_empty() {
@@ -194,17 +242,26 @@ pub fn write_tags(path: &Path, meta: &Json, cover: Option<&[u8]>) -> Result<(), 
 }
 
 fn read_mp4(path: &Path) -> Result<Mp4File, TagError> {
-    Ok(Mp4File::read_from(&mut File::open(path)?, ParseOptions::new().read_properties(false))?)
+    Ok(Mp4File::read_from(
+        &mut File::open(path)?,
+        ParseOptions::new().read_properties(false),
+    )?)
 }
 
 fn read_mp3(path: &Path) -> Result<MpegFile, TagError> {
-    Ok(MpegFile::read_from(&mut File::open(path)?, ParseOptions::new().read_properties(false))?)
+    Ok(MpegFile::read_from(
+        &mut File::open(path)?,
+        ParseOptions::new().read_properties(false),
+    )?)
 }
 
 /// The first embedded picture, if any.
 pub fn embedded_cover(path: &Path) -> Option<Vec<u8>> {
     let tagged = lofty::read_from_path(path).ok()?;
-    tagged.tags().iter().find_map(|t| t.pictures().first().map(|p| p.data().to_vec()))
+    tagged
+        .tags()
+        .iter()
+        .find_map(|t| t.pictures().first().map(|p| p.data().to_vec()))
 }
 
 /// Replace only the embedded artwork, leaving every other tag as it is.
@@ -231,17 +288,28 @@ pub fn set_cover(path: &Path, cover: &[u8]) -> Result<(), TagError> {
 /// Easy-mode tag view (mutagen's `easy=True` keys), used by tests and the migration tool.
 pub fn read_tags(path: &Path) -> BTreeMap<String, Vec<String>> {
     let mut out = BTreeMap::new();
-    let Ok(tagged) = lofty::read_from_path(path) else { return out };
-    let Some(tag) = tagged.primary_tag().or_else(|| tagged.first_tag()) else { return out };
+    let Ok(tagged) = lofty::read_from_path(path) else {
+        return out;
+    };
+    let Some(tag) = tagged.primary_tag().or_else(|| tagged.first_tag()) else {
+        return out;
+    };
     let mut put = |name: &str, values: Vec<String>| {
-        let values: Vec<String> = values.iter().flat_map(|v| v.split('\0')).filter(|v| !v.is_empty()).map(String::from).collect();
+        let values: Vec<String> = values
+            .iter()
+            .flat_map(|v| v.split('\0'))
+            .filter(|v| !v.is_empty())
+            .map(String::from)
+            .collect();
         if !values.is_empty() {
             out.insert(name.to_string(), values);
         }
     };
     let strings = |key: ItemKey| tag.get_strings(&key).map(String::from).collect::<Vec<_>>();
     let pair = |n: ItemKey, total: ItemKey| -> Vec<String> {
-        let Some(n) = tag.get_string(&n) else { return vec![] };
+        let Some(n) = tag.get_string(&n) else {
+            return vec![];
+        };
         match tag.get_string(&total).filter(|t| *t != "0") {
             Some(t) => vec![format!("{n}/{t}")],
             None => vec![n.to_string()],
@@ -251,15 +319,44 @@ pub fn read_tags(path: &Path) -> BTreeMap<String, Vec<String>> {
     put("artist", strings(ItemKey::TrackArtist));
     // lofty's generic view keeps only the first value of a multi-valued MP4 atom.
     let mp4_artists = matches!(suffix(path).as_str(), "m4a" | "mp4")
-        .then(|| read_mp4(path).ok()?.ilst()?.get(&itunes("ARTISTS")).map(|a| a.data().filter_map(|d| if let AtomData::UTF8(s) = d { Some(s.clone()) } else { None }).collect()))
+        .then(|| {
+            read_mp4(path)
+                .ok()?
+                .ilst()?
+                .get(&itunes("ARTISTS"))
+                .map(|a| {
+                    a.data()
+                        .filter_map(|d| {
+                            if let AtomData::UTF8(s) = d {
+                                Some(s.clone())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                })
+        })
         .flatten();
-    put("artists", mp4_artists.unwrap_or_else(|| strings(ItemKey::TrackArtists)));
+    put(
+        "artists",
+        mp4_artists.unwrap_or_else(|| strings(ItemKey::TrackArtists)),
+    );
     put("album", strings(ItemKey::AlbumTitle));
     put("albumartist", strings(ItemKey::AlbumArtist));
-    put("tracknumber", pair(ItemKey::TrackNumber, ItemKey::TrackTotal));
+    put(
+        "tracknumber",
+        pair(ItemKey::TrackNumber, ItemKey::TrackTotal),
+    );
     put("discnumber", pair(ItemKey::DiscNumber, ItemKey::DiscTotal));
     let date = strings(ItemKey::RecordingDate);
-    put("date", if date.is_empty() { strings(ItemKey::Year) } else { date });
+    put(
+        "date",
+        if date.is_empty() {
+            strings(ItemKey::Year)
+        } else {
+            date
+        },
+    );
     put("genre", strings(ItemKey::Genre));
     put("isrc", strings(ItemKey::Isrc));
     out
@@ -291,12 +388,25 @@ mod tests {
 
     fn atom_text(tags: &Ilst, ident: AtomIdent<'_>) -> Vec<String> {
         tags.get(&ident)
-            .map(|a| a.data().filter_map(|d| if let AtomData::UTF8(s) = d { Some(s.clone()) } else { None }).collect())
+            .map(|a| {
+                a.data()
+                    .filter_map(|d| {
+                        if let AtomData::UTF8(s) = d {
+                            Some(s.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
     fn raw(tags: &Ilst, fourcc: &[u8; 4]) -> Vec<u8> {
-        match tags.get(&AtomIdent::Fourcc(*fourcc)).and_then(|a| a.data().next().cloned()) {
+        match tags
+            .get(&AtomIdent::Fourcc(*fourcc))
+            .and_then(|a| a.data().next().cloned())
+        {
             Some(AtomData::Unknown { data, .. }) => data,
             other => panic!("unexpected {other:?}"),
         }
@@ -309,7 +419,10 @@ mod tests {
         let f = make(&dir.path().join("a.m4a"), 6, "aac", false);
         write_tags(&f, &meta(), Some(JPEG)).unwrap();
         let tags = ilst(&f);
-        assert_eq!(atom_text(&tags, AtomIdent::Fourcc(*b"\xa9ART")), ["TVETH, Bato"]);
+        assert_eq!(
+            atom_text(&tags, AtomIdent::Fourcc(*b"\xa9ART")),
+            ["TVETH, Bato"]
+        );
         assert_eq!(atom_text(&tags, itunes("ARTISTS")), ["TVETH", "Bato"]);
         assert_eq!(atom_text(&tags, AtomIdent::Fourcc(*b"aART")), ["TVETH"]);
         assert_eq!(atom_text(&tags, AtomIdent::Fourcc(*b"\xa9day")), ["2026"]);
@@ -330,16 +443,26 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let f = make(&dir.path().join("a.m4a"), 6, "aac", false);
         write_tags(&f, &meta(), Some(JPEG)).unwrap();
-        let only = json!({"title": "Only Title", "artist": "X"}).as_object().cloned().unwrap();
+        let only = json!({"title": "Only Title", "artist": "X"})
+            .as_object()
+            .cloned()
+            .unwrap();
         write_tags(&f, &only, None).unwrap();
         let tags = ilst(&f);
-        assert_eq!(atom_text(&tags, AtomIdent::Fourcc(*b"\xa9nam")), ["Only Title"]);
+        assert_eq!(
+            atom_text(&tags, AtomIdent::Fourcc(*b"\xa9nam")),
+            ["Only Title"]
+        );
         assert!(tags.get(&AtomIdent::Fourcc(*b"\xa9alb")).is_none());
         assert!(tags.get(&AtomIdent::Fourcc(*b"\xa9gen")).is_none());
         assert!(tags.get(&AtomIdent::Fourcc(*b"trkn")).is_none());
         assert!(tags.advisory_rating().is_none());
         assert!(embedded_cover(&f).is_none());
-        assert_eq!(atom_text(&tags, itunes("ARTISTS")), ["X"], "artists fall back to the display artist");
+        assert_eq!(
+            atom_text(&tags, itunes("ARTISTS")),
+            ["X"],
+            "artists fall back to the display artist"
+        );
     }
 
     #[test]
@@ -358,7 +481,11 @@ mod tests {
         assert_eq!(read["isrc"], ["QZ1"]);
         assert_eq!(read["artists"], ["TVETH", "Bato"]);
         let id3 = read_mp3(&f).unwrap().id3v2().cloned().unwrap();
-        assert_eq!(id3.get_user_text("ITUNESADVISORY"), Some("1"), "explicit kept on MP3 (B10)");
+        assert_eq!(
+            id3.get_user_text("ITUNESADVISORY"),
+            Some("1"),
+            "explicit kept on MP3 (B10)"
+        );
         assert_eq!(embedded_cover(&f).unwrap(), JPEG);
     }
 

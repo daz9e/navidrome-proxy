@@ -1,20 +1,26 @@
+FROM rust:1-bookworm AS build
+WORKDIR /src
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
+COPY static ./static
+RUN cargo build --locked --release
+
 FROM python:3.13-slim-bookworm
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg libchromaprint-tools ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
-COPY pyproject.toml README.md ./
-COPY src ./src
-RUN pip install --no-cache-dir . && python -c "import deno, yt_dlp, ytmusicapi, mutagen"
+# yt-dlp (with its deno runtime) is the only Python dependency of the runtime.
+RUN pip install --no-cache-dir "yt-dlp[default,deno]"
+
+COPY --from=build /src/target/release/navidrome-proxy /usr/local/bin/navidrome-proxy
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 ENV DATA_DIR=/data \
     MUSIC_DIR=/music \
     PORT=8084 \
-    PYTHONUNBUFFERED=1 \
     YTDLP_AUTO_UPDATE=1
 
 EXPOSE 8084

@@ -54,10 +54,17 @@ impl ServerIdentity {
 }
 
 pub fn wants_xml(params: &HashMap<String, String>) -> bool {
-    !matches!(params.get("f").map(|f| f.to_lowercase()).as_deref(), Some("json" | "jsonp"))
+    !matches!(
+        params.get("f").map(|f| f.to_lowercase()).as_deref(),
+        Some("json" | "jsonp")
+    )
 }
 
-pub fn envelope(identity: &ServerIdentity, payload: Option<Map<String, Value>>, status: &str) -> Value {
+pub fn envelope(
+    identity: &ServerIdentity,
+    payload: Option<Map<String, Value>>,
+    status: &str,
+) -> Value {
     let mut root = Map::new();
     root.insert("status".into(), json!(status));
     root.insert("version".into(), json!(identity.version));
@@ -106,7 +113,12 @@ struct Element {
 
 impl Element {
     fn new(tag: &str) -> Self {
-        Self { tag: tag.into(), attrs: Vec::new(), text: None, children: Vec::new() }
+        Self {
+            tag: tag.into(),
+            attrs: Vec::new(),
+            text: None,
+            children: Vec::new(),
+        }
     }
 
     fn fill(&mut self, payload: &Map<String, Value>) {
@@ -168,14 +180,21 @@ pub fn to_xml(document: &Value) -> Vec<u8> {
     out.into_bytes()
 }
 
-static CALLBACK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z_$][A-Za-z0-9_.$]{0,127}$").unwrap());
+static CALLBACK: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[A-Za-z_$][A-Za-z0-9_.$]{0,127}$").unwrap());
 
 /// Serialize `document` in the format the client asked for.
 pub fn render(params: &HashMap<String, String>, document: &Value) -> (Vec<u8>, &'static str) {
-    let fmt = params.get("f").map(|f| f.to_lowercase()).unwrap_or_else(|| "xml".into());
+    let fmt = params
+        .get("f")
+        .map(|f| f.to_lowercase())
+        .unwrap_or_else(|| "xml".into());
     let body = || serde_json::to_vec(document).unwrap_or_default();
     // An arbitrary callback would be reflected as executable script; only plain names are honoured.
-    if let Some(cb) = params.get("callback").filter(|cb| fmt == "jsonp" && CALLBACK.is_match(cb)) {
+    if let Some(cb) = params
+        .get("callback")
+        .filter(|cb| fmt == "jsonp" && CALLBACK.is_match(cb))
+    {
         let mut out = format!("{cb}(").into_bytes();
         out.extend(body());
         out.extend(b");");
@@ -211,11 +230,17 @@ mod tests {
     use super::*;
 
     fn identity() -> ServerIdentity {
-        ServerIdentity { server_version: "0.63.2 (be10f89c)".into(), ..Default::default() }
+        ServerIdentity {
+            server_version: "0.63.2 (be10f89c)".into(),
+            ..Default::default()
+        }
     }
 
     fn params(pairs: &[(&str, &str)]) -> HashMap<String, String> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     fn payload(v: Value) -> Option<Map<String, Value>> {
@@ -224,8 +249,11 @@ mod tests {
 
     #[test]
     fn json_envelope_matches_navidrome_shape() {
-        let (body, ctype) =
-            ok(&identity(), &params(&[("f", "json")]), payload(json!({"song": {"id": "x", "isDir": false}})));
+        let (body, ctype) = ok(
+            &identity(),
+            &params(&[("f", "json")]),
+            payload(json!({"song": {"id": "x", "isDir": false}})),
+        );
         assert!(ctype.starts_with("application/json"));
         let v: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(
@@ -237,7 +265,11 @@ mod tests {
             })
         );
         // Key order is Navidrome's: status first.
-        assert!(String::from_utf8(body).unwrap().starts_with(r#"{"subsonic-response":{"status":"ok""#));
+        assert!(
+            String::from_utf8(body)
+                .unwrap()
+                .starts_with(r#"{"subsonic-response":{"status":"ok""#)
+        );
     }
 
     #[test]
@@ -257,25 +289,43 @@ mod tests {
 
     #[test]
     fn lyrics_lines_are_text() {
-        let p = payload(json!({"lyricsList": {"structuredLyrics": [{"line": [{"start": 0, "value": "la & la"}]}]}}));
+        let p = payload(
+            json!({"lyricsList": {"structuredLyrics": [{"line": [{"start": 0, "value": "la & la"}]}]}}),
+        );
         let xml = String::from_utf8(ok(&identity(), &HashMap::new(), p).0).unwrap();
         assert!(xml.contains("<line start=\"0\">la &amp; la</line>"));
     }
 
     #[test]
     fn error_is_status_failed_with_code() {
-        let (body, _) = error(&identity(), &params(&[("f", "json")]), NOT_FOUND, "Song not found");
+        let (body, _) = error(
+            &identity(),
+            &params(&[("f", "json")]),
+            NOT_FOUND,
+            "Song not found",
+        );
         let v: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(v["subsonic-response"]["status"], "failed");
-        assert_eq!(v["subsonic-response"]["error"], json!({"code": 70, "message": "Song not found"}));
+        assert_eq!(
+            v["subsonic-response"]["error"],
+            json!({"code": 70, "message": "Song not found"})
+        );
     }
 
     #[test]
     fn jsonp_wraps_only_safe_callbacks() {
-        let (body, ctype) = ok(&identity(), &params(&[("f", "jsonp"), ("callback", "cb")]), None);
+        let (body, ctype) = ok(
+            &identity(),
+            &params(&[("f", "jsonp"), ("callback", "cb")]),
+            None,
+        );
         assert!(body.starts_with(b"cb(") && body.ends_with(b");"));
         assert!(ctype.contains("javascript"));
-        let (body, ctype) = ok(&identity(), &params(&[("f", "jsonp"), ("callback", "alert(1)//")]), None);
+        let (body, ctype) = ok(
+            &identity(),
+            &params(&[("f", "jsonp"), ("callback", "alert(1)//")]),
+            None,
+        );
         assert!(body.starts_with(b"{"));
         assert!(ctype.starts_with("application/json"));
     }

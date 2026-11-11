@@ -29,12 +29,27 @@ pub struct Reconciler {
 
 /// Duration of what is actually in the file, else the catalog one.
 pub fn known_duration(track: &Track) -> f64 {
-    as_f64(track.audio.get("duration")).filter(|d| *d != 0.0).unwrap_or_else(|| track.duration())
+    as_f64(track.audio.get("duration"))
+        .filter(|d| *d != 0.0)
+        .unwrap_or_else(|| track.duration())
 }
 
 impl Reconciler {
-    pub fn new(store: Arc<Store>, identity: Identity, deezer: Arc<Deezer>, interval: f64, batch: usize) -> Self {
-        Self { store, identity, deezer, interval: Duration::from_secs_f64(interval), batch, task: Mutex::new(None) }
+    pub fn new(
+        store: Arc<Store>,
+        identity: Identity,
+        deezer: Arc<Deezer>,
+        interval: f64,
+        batch: usize,
+    ) -> Self {
+        Self {
+            store,
+            identity,
+            deezer,
+            interval: Duration::from_secs_f64(interval),
+            batch,
+            task: Mutex::new(None),
+        }
     }
 
     pub fn start(self: &Arc<Self>) {
@@ -67,7 +82,12 @@ impl Reconciler {
             if !(track.id.starts_with("yt:") || track.id.starts_with("sc:")) {
                 continue;
             }
-            if self.store.aliases_of(&track.id).iter().any(|(alias, _)| alias.starts_with("deezer:")) {
+            if self
+                .store
+                .aliases_of(&track.id)
+                .iter()
+                .any(|(alias, _)| alias.starts_with("deezer:"))
+            {
                 continue;
             }
             let key = format!("reconciled:{}", track.id);
@@ -79,10 +99,21 @@ impl Reconciler {
                 break;
             }
             let artists = track.artists();
-            let query = format!("{} {}", artists.first().map(String::as_str).unwrap_or(""), track.title());
-            let Ok(rows) = self.deezer.search_tracks(&query, 10, 0).await else { continue };
+            let query = format!(
+                "{} {}",
+                artists.first().map(String::as_str).unwrap_or(""),
+                track.title()
+            );
+            let Ok(rows) = self.deezer.search_tracks(&query, 10, 0).await else {
+                continue;
+            };
             let duration = known_duration(&track);
-            let wanted = Wanted { title: track.title(), artists, duration: Some(duration), ..Default::default() };
+            let wanted = Wanted {
+                title: track.title(),
+                artists,
+                duration: Some(duration),
+                ..Default::default()
+            };
             let mut best: Option<(f64, String)> = None;
             for row in &rows {
                 let meta = deezer::track_meta(row, None);
@@ -96,11 +127,15 @@ impl Reconciler {
                 let deezer_id = ids::track(id);
                 if self.identity.link(&deezer_id, &track.id, "reconciler") {
                     linked += 1;
-                    tracing::info!("linked {} to catalog {deezer_id} (score {score:.0})", track.id);
+                    tracing::info!(
+                        "linked {} to catalog {deezer_id} (score {score:.0})",
+                        track.id
+                    );
                 }
             }
             // Check again in a week (new releases reach Deezer late).
-            self.store.cache_set(&key, &json!(crate::util::now() as i64), 7.0 * 86400.0);
+            self.store
+                .cache_set(&key, &json!(crate::util::now() as i64), 7.0 * 86400.0);
         }
         linked
     }
@@ -120,29 +155,63 @@ mod tests {
             t.insert("duration".into(), json!(secs));
             t
         };
-        fake.add_album(300, "Brand New", "TVETH", 1, vec![with_duration(3001, 300, "Brand New", 122)]);
-        fake.add_album(301, "Other", "TVETH", 1, vec![with_duration(3002, 301, "Other", 180)]);
+        fake.add_album(
+            300,
+            "Brand New",
+            "TVETH",
+            1,
+            vec![with_duration(3001, 300, "Brand New", 122)],
+        );
+        fake.add_album(
+            301,
+            "Other",
+            "TVETH",
+            1,
+            vec![with_duration(3002, 301, "Other", 180)],
+        );
         let server = serve(fake.router()).await;
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("song.m4a");
         std::fs::write(&file, b"x").unwrap();
         let store = Arc::new(Store::memory());
-        for (id, title, artist, duration, audio) in
-            [("yt:AAAAAAAAAAA", "Brand New", "TVETH", 120, 121), ("yt:BBBBBBBBBBB", "Unknown", "Nobody", 100, 100)]
-        {
-            store.remember_track(id, &m(json!({"title": title, "artists": [artist], "duration": duration})));
+        for (id, title, artist, duration, audio) in [
+            ("yt:AAAAAAAAAAA", "Brand New", "TVETH", 120, 121),
+            ("yt:BBBBBBBBBBB", "Unknown", "Nobody", 100, 100),
+        ] {
+            store.remember_track(
+                id,
+                &m(json!({"title": title, "artists": [artist], "duration": duration})),
+            );
             store.update_track(
                 id,
-                &[Field::status("ready"), Field::File(Some(file.display().to_string())), Field::Audio(Some(m(json!({"duration": audio}))))],
+                &[
+                    Field::status("ready"),
+                    Field::File(Some(file.display().to_string())),
+                    Field::Audio(Some(m(json!({"duration": audio})))),
+                ],
             );
         }
         let identity = Identity::new(store.clone());
         let deezer = Arc::new(Deezer::new(store.clone(), 100.0, &server.url, 60.0));
-        let r = Reconciler::new(store.clone(), Identity::new(store.clone()), deezer, 3600.0, 50);
+        let r = Reconciler::new(
+            store.clone(),
+            Identity::new(store.clone()),
+            deezer,
+            3600.0,
+            50,
+        );
         assert_eq!(r.run_once().await, 1);
         assert_eq!(identity.canonical("deezer:3001"), "yt:AAAAAAAAAAA");
-        assert_eq!(identity.canonical("deezer:3002"), "deezer:3002", "different length: another version");
-        assert_eq!(r.run_once().await, 0, "remembered, not rechecked immediately");
+        assert_eq!(
+            identity.canonical("deezer:3002"),
+            "deezer:3002",
+            "different length: another version"
+        );
+        assert_eq!(
+            r.run_once().await,
+            0,
+            "remembered, not rechecked immediately"
+        );
         assert!(store.cache_get("reconciled:yt:BBBBBBBBBBB").is_some());
     }
 
@@ -155,11 +224,26 @@ mod tests {
         std::fs::write(&file, b"x").unwrap();
         let store = Arc::new(Store::memory());
         for id in ["yt:AAAAAAAAAAA", "yt:BBBBBBBBBBB", "yt:CCCCCCCCCCC"] {
-            store.remember_track(id, &m(json!({"title": id, "artists": ["A"], "duration": 100})));
-            store.update_track(id, &[Field::status("ready"), Field::File(Some(file.display().to_string()))]);
+            store.remember_track(
+                id,
+                &m(json!({"title": id, "artists": ["A"], "duration": 100})),
+            );
+            store.update_track(
+                id,
+                &[
+                    Field::status("ready"),
+                    Field::File(Some(file.display().to_string())),
+                ],
+            );
         }
         let deezer = Arc::new(Deezer::new(store.clone(), 100.0, &server.url, 60.0));
-        let r = Reconciler::new(store.clone(), Identity::new(store.clone()), deezer, 3600.0, 2);
+        let r = Reconciler::new(
+            store.clone(),
+            Identity::new(store.clone()),
+            deezer,
+            3600.0,
+            2,
+        );
         r.run_once().await;
         assert_eq!(fake.state.lock().hits.len(), 2);
         r.run_once().await;

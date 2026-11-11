@@ -31,7 +31,9 @@ pub async fn serve(router: Router) -> Server {
 }
 
 pub fn query_pairs(req: &Request) -> Vec<(String, String)> {
-    url::form_urlencoded::parse(req.uri().query().unwrap_or("").as_bytes()).into_owned().collect()
+    url::form_urlencoded::parse(req.uri().query().unwrap_or("").as_bytes())
+        .into_owned()
+        .collect()
 }
 
 pub fn json_response(v: Value) -> Response {
@@ -43,7 +45,15 @@ pub fn m(v: Value) -> Json {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn dz_track(id: u64, title: &str, artist: &str, album_id: u64, album: &str, position: u64, contributors: &[&str]) -> Json {
+pub fn dz_track(
+    id: u64,
+    title: &str,
+    artist: &str,
+    album_id: u64,
+    album: &str,
+    position: u64,
+    contributors: &[&str],
+) -> Json {
     let mut t = json!({
         "id": id, "type": "track", "readable": true, "title": title, "title_version": "",
         "duration": 200, "rank": 1000, "explicit_lyrics": false, "md5_image": format!("md5{album_id}"),
@@ -52,7 +62,11 @@ pub fn dz_track(id: u64, title: &str, artist: &str, album_id: u64, album: &str, 
         "track_position": position, "disk_number": 1, "isrc": format!("ISRC{id}"),
     });
     if !contributors.is_empty() {
-        t["contributors"] = contributors.iter().enumerate().map(|(i, n)| json!({"id": i, "name": n, "role": "Main"})).collect();
+        t["contributors"] = contributors
+            .iter()
+            .enumerate()
+            .map(|(i, n)| json!({"id": i, "name": n, "role": "Main"}))
+            .collect();
     }
     m(t)
 }
@@ -81,7 +95,15 @@ impl Default for FakeDeezer {
             "TVETH",
             1,
             vec![
-                dz_track(4250555171, "Hella Quality", "TVETH", 100, "RAW", 1, &["TVETH", "Bato"]),
+                dz_track(
+                    4250555171,
+                    "Hella Quality",
+                    "TVETH",
+                    100,
+                    "RAW",
+                    1,
+                    &["TVETH", "Bato"],
+                ),
                 dz_track(2, "Second", "TVETH", 100, "RAW", 2, &[]),
             ],
         );
@@ -91,11 +113,18 @@ impl Default for FakeDeezer {
 
 impl FakeDeezer {
     pub fn empty() -> Self {
-        Self { state: Arc::new(Mutex::new(DeezerState::default())) }
+        Self {
+            state: Arc::new(Mutex::new(DeezerState::default())),
+        }
     }
 
     pub fn hits(&self, path_qs: &str) -> usize {
-        self.state.lock().hits.iter().filter(|h| h.as_str() == path_qs).count()
+        self.state
+            .lock()
+            .hits
+            .iter()
+            .filter(|h| h.as_str() == path_qs)
+            .count()
     }
 
     pub fn add_album(&self, id: u64, title: &str, artist: &str, artist_id: u64, tracks: Vec<Json>) {
@@ -119,19 +148,36 @@ impl FakeDeezer {
     }
 
     pub fn router(&self) -> Router {
-        Router::new().fallback(Self::handle).with_state(self.clone())
+        Router::new()
+            .fallback(Self::handle)
+            .with_state(self.clone())
     }
 
     async fn handle(State(fake): State<FakeDeezer>, req: Request) -> Response {
         let path = req.uri().path().trim_start_matches('/').to_string();
         let mut s = fake.state.lock();
-        s.hits.push(req.uri().path_and_query().map(|p| p.as_str().to_string()).unwrap_or_default());
+        s.hits.push(
+            req.uri()
+                .path_and_query()
+                .map(|p| p.as_str().to_string())
+                .unwrap_or_default(),
+        );
         if s.quota_failures > 0 {
             s.quota_failures -= 1;
-            return json_response(json!({"error": {"type": "Exception", "message": "Quota limit exceeded", "code": 4}}));
+            return json_response(
+                json!({"error": {"type": "Exception", "message": "Quota limit exceeded", "code": 4}}),
+            );
         }
-        let q = query_pairs(&req).into_iter().find(|(k, _)| k == "q").map(|(_, v)| v.to_lowercase()).unwrap_or_default();
-        let limit: usize = query_pairs(&req).into_iter().find(|(k, _)| k == "limit").and_then(|(_, v)| v.parse().ok()).unwrap_or(5);
+        let q = query_pairs(&req)
+            .into_iter()
+            .find(|(k, _)| k == "q")
+            .map(|(_, v)| v.to_lowercase())
+            .unwrap_or_default();
+        let limit: usize = query_pairs(&req)
+            .into_iter()
+            .find(|(k, _)| k == "limit")
+            .and_then(|(_, v)| v.parse().ok())
+            .unwrap_or(5);
         let words: Vec<&str> = q.split_whitespace().collect();
         let parts: Vec<&str> = path.split('/').collect();
         let id: u64 = parts.get(1).and_then(|p| p.parse().ok()).unwrap_or(0);
@@ -148,23 +194,41 @@ impl FakeDeezer {
                     "track" => s
                         .tracks
                         .values()
-                        .filter(|t| words.iter().all(|w| format!("{} {}", text(&t["title"]), text(&t["artist"]["name"])).contains(w)))
+                        .filter(|t| {
+                            words.iter().all(|w| {
+                                format!("{} {}", text(&t["title"]), text(&t["artist"]["name"]))
+                                    .contains(w)
+                            })
+                        })
                         .map(|t| without(t, "contributors"))
                         .collect(),
                     "album" => s
                         .albums
                         .values()
-                        .filter(|a| words.iter().all(|w| format!("{} {}", text(&a["title"]), text(&a["artist"]["name"])).contains(w)))
+                        .filter(|a| {
+                            words.iter().all(|w| {
+                                format!("{} {}", text(&a["title"]), text(&a["artist"]["name"]))
+                                    .contains(w)
+                            })
+                        })
                         .map(|a| without(a, "tracks"))
                         .collect(),
-                    _ => s.artists.values().filter(|a| !q.is_empty() && text(&a["name"]).contains(&q)).map(|a| Value::Object(a.clone())).collect(),
+                    _ => s
+                        .artists
+                        .values()
+                        .filter(|a| !q.is_empty() && text(&a["name"]).contains(&q))
+                        .map(|a| Value::Object(a.clone()))
+                        .collect(),
                 };
                 json_response(json!({"total": data.len(), "data": data}))
             }
             ("track", None) if s.tracks.contains_key(&id) => {
                 let mut t = s.tracks[&id].clone();
                 if !t.contains_key("contributors") {
-                    t.insert("contributors".into(), json!([{"id": 0, "name": t["artist"]["name"], "role": "Main"}]));
+                    t.insert(
+                        "contributors".into(),
+                        json!([{"id": 0, "name": t["artist"]["name"], "role": "Main"}]),
+                    );
                 }
                 json_response(Value::Object(t))
             }
@@ -172,24 +236,43 @@ impl FakeDeezer {
                 let data = s.albums[&id]["tracks"]["data"].clone();
                 json_response(json!({"data": data}))
             }
-            ("album", None) if s.albums.contains_key(&id) => json_response(Value::Object(s.albums[&id].clone())),
+            ("album", None) if s.albums.contains_key(&id) => {
+                json_response(Value::Object(s.albums[&id].clone()))
+            }
             ("artist", Some("albums")) if s.artists.contains_key(&id) => {
-                let data: Vec<Value> =
-                    s.albums.values().filter(|a| a["artist"]["id"] == json!(id)).map(|a| without(a, "tracks")).collect();
+                let data: Vec<Value> = s
+                    .albums
+                    .values()
+                    .filter(|a| a["artist"]["id"] == json!(id))
+                    .map(|a| without(a, "tracks"))
+                    .collect();
                 json_response(json!({"data": data}))
             }
             ("artist", Some("top")) if s.artists.contains_key(&id) => {
-                let data: Vec<Value> =
-                    s.tracks.values().filter(|t| t["artist"]["id"] == json!(id)).take(limit).map(|t| Value::Object(t.clone())).collect();
+                let data: Vec<Value> = s
+                    .tracks
+                    .values()
+                    .filter(|t| t["artist"]["id"] == json!(id))
+                    .take(limit)
+                    .map(|t| Value::Object(t.clone()))
+                    .collect();
                 json_response(json!({"data": data}))
             }
             ("artist", Some("related")) if s.artists.contains_key(&id) => {
-                let data: Vec<Value> =
-                    s.artists.values().filter(|a| a["id"] != json!(id)).map(|a| Value::Object(a.clone())).collect();
+                let data: Vec<Value> = s
+                    .artists
+                    .values()
+                    .filter(|a| a["id"] != json!(id))
+                    .map(|a| Value::Object(a.clone()))
+                    .collect();
                 json_response(json!({"data": data}))
             }
-            ("artist", None) if s.artists.contains_key(&id) => json_response(Value::Object(s.artists[&id].clone())),
-            _ => json_response(json!({"error": {"type": "DataException", "message": "no data", "code": 800}})),
+            ("artist", None) if s.artists.contains_key(&id) => {
+                json_response(Value::Object(s.artists[&id].clone()))
+            }
+            _ => json_response(
+                json!({"error": {"type": "DataException", "message": "no data", "code": 800}}),
+            ),
         }
     }
 }
@@ -200,11 +283,16 @@ pub const USERS: [(&str, &str); 2] = [("alice", "alicepw"), ("bob", "bobpw")];
 
 pub fn md5_token(password: &str, salt: &str) -> String {
     use md5::{Digest, Md5};
-    format!("t={}&s={salt}", hex::encode(Md5::digest(format!("{password}{salt}"))))
+    format!(
+        "t={}&s={salt}",
+        hex::encode(Md5::digest(format!("{password}{salt}")))
+    )
 }
 
 fn nd_identity() -> Json {
-    m(json!({"version": "1.16.1", "type": "navidrome", "serverVersion": "0.63.2 (fake)", "openSubsonic": true}))
+    m(
+        json!({"version": "1.16.1", "type": "navidrome", "serverVersion": "0.63.2 (fake)", "openSubsonic": true}),
+    )
 }
 
 pub fn nd_ok(payload: Value) -> Value {
@@ -265,17 +353,28 @@ pub struct FakeNavidrome {
 
 impl Default for FakeNavidrome {
     fn default() -> Self {
-        let state = NavidromeState { audio: vec![0u8; 50_000], ..Default::default() };
-        Self { state: Arc::new(Mutex::new(state)) }
+        let state = NavidromeState {
+            audio: vec![0u8; 50_000],
+            ..Default::default()
+        };
+        Self {
+            state: Arc::new(Mutex::new(state)),
+        }
     }
 }
 
 fn get<'a>(q: &'a [(String, String)], key: &str) -> &'a str {
-    q.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str()).unwrap_or("")
+    q.iter()
+        .find(|(k, _)| k == key)
+        .map(|(_, v)| v.as_str())
+        .unwrap_or("")
 }
 
 fn all<'a>(q: &'a [(String, String)], key: &str) -> Vec<&'a str> {
-    q.iter().filter(|(k, _)| k == key).map(|(_, v)| v.as_str()).collect()
+    q.iter()
+        .filter(|(k, _)| k == key)
+        .map(|(_, v)| v.as_str())
+        .collect()
 }
 
 impl FakeNavidrome {
@@ -286,11 +385,22 @@ impl FakeNavidrome {
     }
 
     pub fn count(&self, method: &str) -> usize {
-        self.state.lock().requests.iter().filter(|(m, _)| m == method).count()
+        self.state
+            .lock()
+            .requests
+            .iter()
+            .filter(|(m, _)| m == method)
+            .count()
     }
 
     pub fn requests(&self, method: &str) -> Vec<Vec<(String, String)>> {
-        self.state.lock().requests.iter().filter(|(m, _)| m == method).map(|(_, q)| q.clone()).collect()
+        self.state
+            .lock()
+            .requests
+            .iter()
+            .filter(|(m, _)| m == method)
+            .map(|(_, q)| q.clone())
+            .collect()
     }
 
     pub fn router(&self) -> Router {
@@ -298,12 +408,23 @@ impl FakeNavidrome {
             .route("/rest/{method}", axum::routing::any(Self::handle))
             .fallback(|req: Request| async move {
                 let headers = req.headers();
-                let host = headers.get("host").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
-                let enc = headers.get("accept-encoding").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+                let host = headers
+                    .get("host")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("")
+                    .to_string();
+                let enc = headers
+                    .get("accept-encoding")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("")
+                    .to_string();
                 Response::builder()
                     .header("X-Seen-Host", host)
                     .header("X-Seen-Encoding", enc)
-                    .body(axum::body::Body::from(format!("navidrome ui {}", req.uri().path())))
+                    .body(axum::body::Body::from(format!(
+                        "navidrome ui {}",
+                        req.uri().path()
+                    )))
                     .unwrap()
             })
             .with_state(self.clone())
@@ -334,9 +455,15 @@ impl FakeNavidrome {
     ) -> Response {
         let method = method.trim_end_matches(".view").to_string();
         let mut q = query_pairs(&req);
-        let range = req.headers().get("range").and_then(|v| v.to_str().ok()).map(String::from);
+        let range = req
+            .headers()
+            .get("range")
+            .and_then(|v| v.to_str().ok())
+            .map(String::from);
         if req.method() == axum::http::Method::POST {
-            let body = axum::body::to_bytes(req.into_body(), 1 << 20).await.unwrap_or_default();
+            let body = axum::body::to_bytes(req.into_body(), 1 << 20)
+                .await
+                .unwrap_or_default();
             q.extend(url::form_urlencoded::parse(&body).into_owned());
         }
         let mut s = fake.state.lock();
@@ -346,14 +473,20 @@ impl FakeNavidrome {
             return json_response(nd_ok(json!({})));
         }
         // Like Navidrome: XML unless the caller asks for JSON.
-        if !matches!(get(&q, "f"), "json" | "jsonp") && !matches!(method.as_str(), "stream" | "download") {
+        if !matches!(get(&q, "f"), "json" | "jsonp")
+            && !matches!(method.as_str(), "stream" | "download")
+        {
             let status = if user.is_some() { "ok" } else { "failed" };
             return Response::builder()
                 .header("Content-Type", "application/xml")
-                .body(axum::body::Body::from(format!(r#"<subsonic-response xmlns="http://subsonic.org/restapi" status="{status}"/>"#)))
+                .body(axum::body::Body::from(format!(
+                    r#"<subsonic-response xmlns="http://subsonic.org/restapi" status="{status}"/>"#
+                )))
                 .unwrap();
         }
-        let Some(user) = user else { return json_response(nd_failed(40, "Wrong username or password")) };
+        let Some(user) = user else {
+            return json_response(nd_failed(40, "Wrong username or password"));
+        };
         let id = get(&q, "id").to_string();
         match method.as_str() {
             "ping" => json_response(nd_ok(json!({}))),
@@ -365,20 +498,40 @@ impl FakeNavidrome {
                     .songs
                     .iter()
                     .filter(|x| {
-                        let hay = format!("{} {} {}", x["title"].as_str().unwrap_or(""), x["artist"].as_str().unwrap_or(""), x["album"].as_str().unwrap_or("")).to_lowercase();
+                        let hay = format!(
+                            "{} {} {}",
+                            x["title"].as_str().unwrap_or(""),
+                            x["artist"].as_str().unwrap_or(""),
+                            x["album"].as_str().unwrap_or("")
+                        )
+                        .to_lowercase();
                         query.split_whitespace().all(|w| hay.contains(w))
                     })
                     .skip(offset)
                     .take(count)
                     .map(|x| Value::Object(x.clone()))
                     .collect();
-                let key = if method == "search3" { "searchResult3" } else { "searchResult2" };
-                let mut inner = if count > 0 { json!({"song": found}) } else { json!({}) };
+                let key = if method == "search3" {
+                    "searchResult3"
+                } else {
+                    "searchResult2"
+                };
+                let mut inner = if count > 0 {
+                    json!({"song": found})
+                } else {
+                    json!({})
+                };
                 if get(&q, "artistCount").parse().unwrap_or(20) > 0 {
                     let mut artists: Vec<Value> = vec![];
                     for x in &s.songs {
                         let a = json!({"id": x["artistId"], "name": x["artist"]});
-                        if x["artist"].as_str().unwrap_or("").to_lowercase().contains(&query) && !artists.contains(&a) {
+                        if x["artist"]
+                            .as_str()
+                            .unwrap_or("")
+                            .to_lowercase()
+                            .contains(&query)
+                            && !artists.contains(&a)
+                        {
                             artists.push(a);
                         }
                     }
@@ -393,7 +546,11 @@ impl FakeNavidrome {
                 None => json_response(nd_failed(70, "Song not found")),
             },
             "getStarred" | "getStarred2" => {
-                let key = if method == "getStarred2" { "starred2" } else { "starred" };
+                let key = if method == "getStarred2" {
+                    "starred2"
+                } else {
+                    "starred"
+                };
                 let songs: Vec<Value> = s
                     .stars
                     .get(&user)
@@ -406,7 +563,11 @@ impl FakeNavidrome {
                         Value::Object(x)
                     })
                     .collect();
-                let inner = if songs.is_empty() { json!({}) } else { json!({"song": songs}) };
+                let inner = if songs.is_empty() {
+                    json!({})
+                } else {
+                    json!({"song": songs})
+                };
                 json_response(nd_ok(json!({ key: inner })))
             }
             "star" | "unstar" => {
@@ -447,15 +608,26 @@ impl FakeNavidrome {
                 json_response(nd_ok(json!({"scanStatus": {"scanning": true, "count": n}})))
             }
             "updatePlaylist" => {
-                let ids: Vec<String> = all(&q, "songIdToAdd").into_iter().map(String::from).collect();
+                let ids: Vec<String> = all(&q, "songIdToAdd")
+                    .into_iter()
+                    .map(String::from)
+                    .collect();
                 if ids.iter().any(|i| s.song(i).is_none()) {
                     return json_response(nd_failed(70, "not found"));
                 }
-                s.playlists.entry(get(&q, "playlistId").to_string()).or_default().extend(ids);
+                s.playlists
+                    .entry(get(&q, "playlistId").to_string())
+                    .or_default()
+                    .extend(ids);
                 json_response(nd_ok(json!({})))
             }
             "getAlbum" => {
-                let songs: Vec<Value> = s.songs.iter().filter(|x| x["albumId"] == id).map(|x| Value::Object(x.clone())).collect();
+                let songs: Vec<Value> = s
+                    .songs
+                    .iter()
+                    .filter(|x| x["albumId"] == id)
+                    .map(|x| Value::Object(x.clone()))
+                    .collect();
                 if songs.is_empty() {
                     return json_response(nd_failed(70, "Album not found"));
                 }
@@ -473,13 +645,21 @@ impl FakeNavidrome {
                 };
                 let songs: Vec<String> = all(&q, "songId").into_iter().map(String::from).collect();
                 s.playlists.insert(pid.clone(), songs);
-                json_response(nd_ok(json!({"playlist": {"id": pid, "name": get(&q, "name"), "entry": []}})))
+                json_response(nd_ok(
+                    json!({"playlist": {"id": pid, "name": get(&q, "name"), "entry": []}}),
+                ))
             }
             "getPlaylist" => match s.playlists.get(&id) {
                 None => json_response(nd_failed(70, "not found")),
                 Some(pl) => {
-                    let entries: Vec<Value> = pl.iter().filter_map(|i| s.song(i)).map(|x| Value::Object(x.clone())).collect();
-                    json_response(nd_ok(json!({"playlist": {"id": id, "name": "p", "songCount": entries.len(), "duration": 0, "entry": entries}})))
+                    let entries: Vec<Value> = pl
+                        .iter()
+                        .filter_map(|i| s.song(i))
+                        .map(|x| Value::Object(x.clone()))
+                        .collect();
+                    json_response(nd_ok(
+                        json!({"playlist": {"id": id, "name": "p", "songCount": entries.len(), "duration": 0, "entry": entries}}),
+                    ))
                 }
             },
             "stream" | "download" => {
@@ -495,7 +675,10 @@ impl FakeNavidrome {
                     return Response::builder()
                         .status(206)
                         .header("Content-Type", "audio/mp4")
-                        .header("Content-Range", format!("bytes {start}-{end}/{}", data.len()))
+                        .header(
+                            "Content-Range",
+                            format!("bytes {start}-{end}/{}", data.len()),
+                        )
                         .header("Accept-Ranges", "bytes")
                         .body(axum::body::Body::from(data[start..=end].to_vec()))
                         .unwrap();
@@ -508,7 +691,9 @@ impl FakeNavidrome {
             }
             _ => {
                 let params: Json = q.iter().map(|(k, v)| (k.clone(), json!(v))).collect();
-                json_response(nd_ok(json!({"echo": {"method": method, "params": Value::Object(params).to_string()}})))
+                json_response(nd_ok(
+                    json!({"echo": {"method": method, "params": Value::Object(params).to_string()}}),
+                ))
             }
         }
     }

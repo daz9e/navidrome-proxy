@@ -12,16 +12,80 @@ use unicode_normalization::char::canonical_combining_class;
 /// one that the request does not carry is rejected for downloads (the "minus instead
 /// of the original" incident with FORTUNA 812 — Black Water) and penalized in imports.
 pub const VERSION_MARKERS: &[(&str, &[&str])] = &[
-    ("instrumental", &["instrumental", "инструментал", "минус", "minus", "backing track", "type beat", "beat", "no vocals", "без слов"]),
+    (
+        "instrumental",
+        &[
+            "instrumental",
+            "инструментал",
+            "минус",
+            "minus",
+            "backing track",
+            "type beat",
+            "beat",
+            "no vocals",
+            "без слов",
+        ],
+    ),
     ("karaoke", &["karaoke", "караоке"]),
-    ("remix", &["remix", "ремикс", "rmx", "flip", "bootleg", "mashup", "мэшап", "vip mix"]),
+    (
+        "remix",
+        &[
+            "remix",
+            "ремикс",
+            "rmx",
+            "flip",
+            "bootleg",
+            "mashup",
+            "мэшап",
+            "vip mix",
+        ],
+    ),
     ("live", &["live", "лайв", "концерт", "concert", "unplugged"]),
-    ("speed", &["sped up", "speed up", "speedup", "nightcore", "ускоренн", "slowed", "замедлен", "reverb", "daycore", "8d", "bass boosted"]),
-    ("cover", &["cover", "кавер", "tribute", "в стиле", "originally performed", "piano version"]),
+    (
+        "speed",
+        &[
+            "sped up",
+            "speed up",
+            "speedup",
+            "nightcore",
+            "ускоренн",
+            "slowed",
+            "замедлен",
+            "reverb",
+            "daycore",
+            "8d",
+            "bass boosted",
+        ],
+    ),
+    (
+        "cover",
+        &[
+            "cover",
+            "кавер",
+            "tribute",
+            "в стиле",
+            "originally performed",
+            "piano version",
+        ],
+    ),
     ("acoustic", &["acoustic", "акустик"]),
     ("extended", &["extended", "club mix", "radio edit", "edit"]),
-    ("demo", &["demo", "демо", "snippet", "сниппет", "preview", "leak"]),
-    ("loop", &["1 hour", "one hour", "10 hours", "hour loop", "1 час", "10 часов", "час версия"]),
+    (
+        "demo",
+        &["demo", "демо", "snippet", "сниппет", "preview", "leak"],
+    ),
+    (
+        "loop",
+        &[
+            "1 hour",
+            "one hour",
+            "10 hours",
+            "hour loop",
+            "1 час",
+            "10 часов",
+            "час версия",
+        ],
+    ),
 ];
 
 fn re(pattern: &str) -> Regex {
@@ -30,10 +94,13 @@ fn re(pattern: &str) -> Regex {
 
 /// Noise that video titles add around the real title.
 static VIDEO_NOISE: LazyLock<Regex> = LazyLock::new(|| {
-    re(r"(?i)\b(official( music)?( video| audio| lyric video| visualizer)?|music video|lyric video|lyrics?|audio|video|clip|клип|премьера|premiere|hd|hq|4k|mv|visualizer|текст песни|полная версия|full version|prod\.? by [^()\[\]]*)\b")
+    re(
+        r"(?i)\b(official( music)?( video| audio| lyric video| visualizer)?|music video|lyric video|lyrics?|audio|video|clip|клип|премьера|premiere|hd|hq|4k|mv|visualizer|текст песни|полная версия|full version|prod\.? by [^()\[\]]*)\b",
+    )
 });
-static FEAT: LazyLock<Regex> =
-    LazyLock::new(|| re(r"(?i)[\(\[]?\s*\b(feat\.?|ft\.?|featuring|при уч\.?|при участии)\s+[^()\[\]]*[\)\]]?"));
+static FEAT: LazyLock<Regex> = LazyLock::new(|| {
+    re(r"(?i)[\(\[]?\s*\b(feat\.?|ft\.?|featuring|при уч\.?|при участии)\s+[^()\[\]]*[\)\]]?")
+});
 static ARTIST_SPLIT: LazyLock<Regex> = LazyLock::new(|| {
     re(r"(?i)\s*(?:,|;|&|/|\+|\bfeat\.?|\bft\.?|\bfeaturing|\bx\b|\bх\b|\band\b|\bи\b|\bwith\b)\s*")
 });
@@ -63,18 +130,48 @@ fn casefold(text: &str) -> String {
 pub fn normalize(text: &str) -> String {
     let value: String = text.nfkc().collect();
     let value = casefold(&value).replace('ё', "е").replace(['’', '`'], "'");
-    let value: String = value.nfkd().filter(|c| canonical_combining_class(*c) == 0).collect();
+    let value: String = value
+        .nfkd()
+        .filter(|c| canonical_combining_class(*c) == 0)
+        .collect();
     let value = NON_WORD.replace_all(&value, " ");
     value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn translit(c: char) -> Option<&'static str> {
     Some(match c {
-        'а' => "a", 'б' => "b", 'в' => "v", 'г' => "g", 'д' => "d", 'е' => "e", 'ж' => "zh",
-        'з' => "z", 'и' => "i", 'й' => "y", 'к' => "k", 'л' => "l", 'м' => "m", 'н' => "n",
-        'о' => "o", 'п' => "p", 'р' => "r", 'с' => "s", 'т' => "t", 'у' => "u", 'ф' => "f",
-        'х' => "h", 'ц' => "ts", 'ч' => "ch", 'ш' => "sh", 'щ' => "sch", 'ъ' => "", 'ы' => "y",
-        'ь' => "", 'э' => "e", 'ю' => "yu", 'я' => "ya",
+        'а' => "a",
+        'б' => "b",
+        'в' => "v",
+        'г' => "g",
+        'д' => "d",
+        'е' => "e",
+        'ж' => "zh",
+        'з' => "z",
+        'и' => "i",
+        'й' => "y",
+        'к' => "k",
+        'л' => "l",
+        'м' => "m",
+        'н' => "n",
+        'о' => "o",
+        'п' => "p",
+        'р' => "r",
+        'с' => "s",
+        'т' => "t",
+        'у' => "u",
+        'ф' => "f",
+        'х' => "h",
+        'ц' => "ts",
+        'ч' => "ch",
+        'ш' => "sh",
+        'щ' => "sch",
+        'ъ' => "",
+        'ы' => "y",
+        'ь' => "",
+        'э' => "e",
+        'ю' => "yu",
+        'я' => "ya",
         _ => return None,
     })
 }
@@ -92,13 +189,21 @@ pub fn latin(text: &str) -> String {
 }
 
 pub fn words(text: &str) -> HashSet<String> {
-    normalize(text).split(' ').filter(|w| !w.is_empty()).map(String::from).collect()
+    normalize(text)
+        .split(' ')
+        .filter(|w| !w.is_empty())
+        .map(String::from)
+        .collect()
 }
 
 pub fn split_artists(credit: &str) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut out = Vec::new();
-    for part in ARTIST_SPLIT.split(credit).map(str::trim).filter(|p| !p.is_empty()) {
+    for part in ARTIST_SPLIT
+        .split(credit)
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+    {
         let key = normalize(part);
         if !key.is_empty() && seen.insert(key) {
             out.push(part.to_string());
@@ -111,7 +216,11 @@ pub fn split_artists(credit: &str) -> Vec<String> {
 pub fn base_title(title: &str) -> String {
     let value = FEAT.replace_all(title, " ");
     let stripped = normalize(&BRACKETS.replace_all(&value, " "));
-    if stripped.is_empty() { normalize(&value) } else { stripped }
+    if stripped.is_empty() {
+        normalize(&value)
+    } else {
+        stripped
+    }
 }
 
 pub fn markers(text: &str) -> BTreeSet<&'static str> {
@@ -120,7 +229,10 @@ pub fn markers(text: &str) -> BTreeSet<&'static str> {
     for (name, variants) in VERSION_MARKERS {
         for variant in *variants {
             let v = normalize(variant);
-            if !v.is_empty() && (norm.contains(&format!(" {v} ")) || (v.chars().count() >= 6 && norm.contains(&v))) {
+            if !v.is_empty()
+                && (norm.contains(&format!(" {v} "))
+                    || (v.chars().count() >= 6 && norm.contains(&v)))
+            {
                 found.insert(*name);
                 break;
             }
@@ -158,7 +270,12 @@ pub fn ratio(a: &str, b: &str) -> f64 {
                     if j >= bhi {
                         break;
                     }
-                    let k = j.checked_sub(1).and_then(|p| j2len.get(&p)).copied().unwrap_or(0) + 1;
+                    let k = j
+                        .checked_sub(1)
+                        .and_then(|p| j2len.get(&p))
+                        .copied()
+                        .unwrap_or(0)
+                        + 1;
                     new.insert(j, k);
                     if k > bestsize {
                         (besti, bestj, bestsize) = (i + 1 - k, j + 1 - k, k);
@@ -217,7 +334,11 @@ pub enum Credits<'a> {
 
 /// Share of requested artists found among the candidate's credits (0..1).
 pub fn artists_match(wanted: &[String], candidate: Credits) -> f64 {
-    let wanted_keys: Vec<String> = wanted.iter().map(|a| normalize(a)).filter(|k| !k.is_empty()).collect();
+    let wanted_keys: Vec<String> = wanted
+        .iter()
+        .map(|a| normalize(a))
+        .filter(|k| !k.is_empty())
+        .collect();
     if wanted_keys.is_empty() {
         return 1.0;
     }
@@ -229,7 +350,11 @@ pub fn artists_match(wanted: &[String], candidate: Credits) -> f64 {
             l
         }
     };
-    let have: Vec<String> = list.iter().map(|c| normalize(c)).filter(|k| !k.is_empty()).collect();
+    let have: Vec<String> = list
+        .iter()
+        .map(|c| normalize(c))
+        .filter(|k| !k.is_empty())
+        .collect();
     let joined = format!(" {} ", have.join(" "));
     let have_latin: Vec<String> = have.iter().map(|h| latin(h)).collect();
     // "M.C." normalizes to "m c": compare without spaces as well.
@@ -238,8 +363,14 @@ pub fn artists_match(wanted: &[String], candidate: Credits) -> f64 {
     for key in &wanted_keys {
         let same = have.contains(key)
             || joined.contains(&format!(" {key} "))
-            || have.iter().any(|h| similarity(key, h) >= 0.88 || (key.len() > 1 && squash(key) == squash(h)));
-        if same || have_latin.iter().any(|h| similarity(&latin(key), h) >= 0.88) {
+            || have
+                .iter()
+                .any(|h| similarity(key, h) >= 0.88 || (key.len() > 1 && squash(key) == squash(h)));
+        if same
+            || have_latin
+                .iter()
+                .any(|h| similarity(&latin(key), h) >= 0.88)
+        {
             hits += 1;
         }
     }
@@ -257,7 +388,11 @@ pub struct Wanted {
 
 impl Wanted {
     pub fn new(title: &str, artists: &[&str]) -> Self {
-        Self { title: title.into(), artists: artists.iter().map(|a| a.to_string()).collect(), ..Default::default() }
+        Self {
+            title: title.into(),
+            artists: artists.iter().map(|a| a.to_string()).collect(),
+            ..Default::default()
+        }
     }
 
     pub fn markers(&self) -> BTreeSet<&'static str> {
@@ -283,7 +418,11 @@ fn round2(x: f64) -> f64 {
 }
 
 fn reject(reason: String, why: &'static str) -> Scored {
-    Scored { score: 0.0, reasons: vec![reason], rejected: Some(why) }
+    Scored {
+        score: 0.0,
+        reasons: vec![reason],
+        rejected: Some(why),
+    }
 }
 
 /// Artists of a track meta dict: `artists` list, else the `artist` credit.
@@ -310,12 +449,20 @@ pub fn score_catalog_candidate(wanted: &Wanted, cand: &Json) -> Scored {
         && !cand_isrc.is_empty()
         && isrc.to_uppercase() == cand_isrc.to_uppercase()
     {
-        return Scored { score: 100.0, reasons: vec!["isrc".into()], rejected: None };
+        return Scored {
+            score: 100.0,
+            reasons: vec!["isrc".into()],
+            rejected: None,
+        };
     }
     let title = as_str(cand.get("title"));
-    let full_title = format!("{} {}", title, as_str(cand.get("title_version"))).trim().to_string();
+    let full_title = format!("{} {}", title, as_str(cand.get("title_version")))
+        .trim()
+        .to_string();
     let mut score = 0.0;
-    if normalize(&full_title) == normalize(&wanted.title) || normalize(&title) == normalize(&wanted.title) {
+    if normalize(&full_title) == normalize(&wanted.title)
+        || normalize(&title) == normalize(&wanted.title)
+    {
         score += 40.0;
         reasons.push("title=exact".into());
     } else if base_title(&title) == base_title(&wanted.title) {
@@ -341,7 +488,10 @@ pub fn score_catalog_candidate(wanted: &Wanted, cand: &Json) -> Scored {
         }
         _ => score += 7.5, // unknown album: neutral half credit
     }
-    match (wanted.duration(), as_f64(cand.get("duration")).filter(|d| *d != 0.0)) {
+    match (
+        wanted.duration(),
+        as_f64(cand.get("duration")).filter(|d| *d != 0.0),
+    ) {
         (Some(w), Some(c)) => {
             let diff = (c - w).abs();
             if diff <= 3.0 {
@@ -355,7 +505,10 @@ pub fn score_catalog_candidate(wanted: &Wanted, cand: &Json) -> Scored {
         _ => score += 5.0,
     }
     let wanted_markers = wanted.markers();
-    let extra: Vec<_> = markers(&full_title).difference(&wanted_markers).copied().collect();
+    let extra: Vec<_> = markers(&full_title)
+        .difference(&wanted_markers)
+        .copied()
+        .collect();
     if !extra.is_empty() {
         score -= 25.0 * extra.len() as f64;
         reasons.push(format!("version:{}", extra.join(",")));
@@ -365,7 +518,11 @@ pub fn score_catalog_candidate(wanted: &Wanted, cand: &Json) -> Scored {
         score -= 3.0;
         reasons.push("single".into());
     }
-    Scored { score: round2(score), reasons, rejected: None }
+    Scored {
+        score: round2(score),
+        reasons,
+        rejected: None,
+    }
 }
 
 /// Remove `name` from `text` where it stands as a whole word (case-insensitive).
@@ -414,8 +571,11 @@ pub fn score_source_candidate(
         _ => 5.0,
     };
     let wanted_markers = wanted.markers();
-    let extra: Vec<_> =
-        markers(title).difference(&wanted_markers).copied().filter(|m| *m != "extended").collect();
+    let extra: Vec<_> = markers(title)
+        .difference(&wanted_markers)
+        .copied()
+        .filter(|m| *m != "extended")
+        .collect();
     if !extra.is_empty() {
         return reject(format!("version:{}", extra.join(",")), "version");
     }
@@ -433,13 +593,17 @@ pub fn score_source_candidate(
         return reject("artist missing".into(), "artist");
     }
     let mut clean_title = VIDEO_NOISE.replace_all(title, " ").into_owned();
-    for name in wanted.artists.iter().chain(std::iter::once(&uploader_clean)) {
+    for name in wanted
+        .artists
+        .iter()
+        .chain(std::iter::once(&uploader_clean))
+    {
         clean_title = strip_name(&clean_title, name);
     }
     let clean_title = EDGE_DASHES.replace_all(&clean_title, " ").into_owned();
     let wanted_base = base_title(&wanted.title);
-    let mut title_sim =
-        similarity(&base_title(&clean_title), &wanted_base).max(similarity(&base_title(title), &wanted_base));
+    let mut title_sim = similarity(&base_title(&clean_title), &wanted_base)
+        .max(similarity(&base_title(title), &wanted_base));
     let wanted_words = words(&wanted_base);
     if !wanted_words.is_empty() && wanted_words.is_subset(&words(title)) {
         title_sim = title_sim.max(0.9);
@@ -455,12 +619,19 @@ pub fn score_source_candidate(
         return reject(format!("title~{title_sim:.2}"), "title");
     }
     let mut score = 45.0 * title_sim + 25.0 * artist_share + duration_score;
-    let mut reasons = vec![format!("title~{title_sim:.2}"), format!("artists={artist_share:.2}")];
+    let mut reasons = vec![
+        format!("title~{title_sim:.2}"),
+        format!("artists={artist_share:.2}"),
+    ];
     if official || uploader.to_lowercase().ends_with(" - topic") {
         score += 10.0;
         reasons.push("official".into());
     }
-    Scored { score: round2(score), reasons, rejected: None }
+    Scored {
+        score: round2(score),
+        reasons,
+        rejected: None,
+    }
 }
 
 /// Whether `got` names the same song as `wanted` (not merely a similar title).
@@ -469,7 +640,10 @@ pub fn score_source_candidate(
 /// is not "15 (Interlude)", and "Расстройство" is not "Временно".
 pub fn title_matches(wanted: &str, got: &str, strict: f64) -> bool {
     let numbers = |s: &str| -> HashSet<String> {
-        NUMBER.find_iter(&normalize(s)).map(|m| m.as_str().to_string()).collect()
+        NUMBER
+            .find_iter(&normalize(s))
+            .map(|m| m.as_str().to_string())
+            .collect()
     };
     if !numbers(wanted).is_subset(&numbers(got)) {
         return false;
@@ -491,7 +665,11 @@ pub fn title_matches(wanted: &str, got: &str, strict: f64) -> bool {
 
 /// Share of query words found in the fields (prefix match, for search-as-you-type).
 pub fn relevance(query: &str, fields: &[&str]) -> f64 {
-    let wanted: Vec<String> = normalize(query).split(' ').filter(|w| !w.is_empty()).map(String::from).collect();
+    let wanted: Vec<String> = normalize(query)
+        .split(' ')
+        .filter(|w| !w.is_empty())
+        .map(String::from)
+        .collect();
     if wanted.is_empty() {
         return 0.0;
     }
@@ -500,7 +678,10 @@ pub fn relevance(query: &str, fields: &[&str]) -> f64 {
     let have: Vec<&str> = have_text.split(' ').filter(|w| !w.is_empty()).collect();
     let hits = wanted
         .iter()
-        .filter(|w| have.iter().any(|h| h == w || (w.chars().count() >= 2 && h.starts_with(w.as_str()))))
+        .filter(|w| {
+            have.iter()
+                .any(|h| h == w || (w.chars().count() >= 2 && h.starts_with(w.as_str())))
+        })
         .count();
     hits as f64 / wanted.len() as f64
 }
@@ -527,7 +708,11 @@ mod tests {
         assert_eq!(normalize("  Ёлки — «Прованс»!! "), "елки прованс");
         assert_eq!(normalize("Beyoncé"), "beyonce");
         assert_eq!(normalize("Straße"), "strasse");
-        assert_eq!(normalize("Йога"), "иога", "NFKD drops the breve like Python");
+        assert_eq!(
+            normalize("Йога"),
+            "иога",
+            "NFKD drops the breve like Python"
+        );
     }
 
     #[test]
@@ -559,7 +744,11 @@ mod tests {
             ("Life Is Live", &["live"]),
         ];
         for (title, expected) in cases {
-            assert_eq!(markers(title), expected.iter().copied().collect(), "{title}");
+            assert_eq!(
+                markers(title),
+                expected.iter().copied().collect(),
+                "{title}"
+            );
         }
     }
 
@@ -574,15 +763,24 @@ mod tests {
     #[test]
     fn base_title_drops_feat_and_brackets() {
         assert_eq!(base_title("Hella Quality (feat. Bato)"), "hella quality");
-        assert_eq!(base_title("Instant Crush (feat. Julian Casablancas)"), "instant crush");
+        assert_eq!(
+            base_title("Instant Crush (feat. Julian Casablancas)"),
+            "instant crush"
+        );
     }
 
     #[test]
     fn catalog_scoring_prefers_exact_collab_and_penalizes_versions() {
         let wanted = Wanted::new("Hella Quality", &["TVETH", "BATO"]);
-        let good = m(json!({"title": "Hella Quality", "artists": ["TVETH", "Bato"], "album": "RAW", "duration": 214}));
-        let solo = m(json!({"title": "Hella Quality", "artists": ["TVETH"], "album": "RAW", "duration": 214}));
-        let remix = m(json!({"title": "Hella Quality (Remix)", "artists": ["TVETH", "Bato"], "album": "R", "duration": 200}));
+        let good = m(
+            json!({"title": "Hella Quality", "artists": ["TVETH", "Bato"], "album": "RAW", "duration": 214}),
+        );
+        let solo = m(
+            json!({"title": "Hella Quality", "artists": ["TVETH"], "album": "RAW", "duration": 214}),
+        );
+        let remix = m(
+            json!({"title": "Hella Quality (Remix)", "artists": ["TVETH", "Bato"], "album": "R", "duration": 200}),
+        );
         let (g, so, r) = (
             score_catalog_candidate(&wanted, &good).score,
             score_catalog_candidate(&wanted, &solo).score,
@@ -594,36 +792,85 @@ mod tests {
 
     #[test]
     fn catalog_scoring_album_and_isrc() {
-        let wanted = Wanted { album: Some("Night Visions".into()), ..Wanted::new("Radioactive", &["Imagine Dragons"]) };
-        let album = m(json!({"title": "Radioactive", "artists": ["Imagine Dragons"], "album": "Night Visions", "duration": 187}));
-        let single = m(json!({"title": "Radioactive", "artists": ["Imagine Dragons"], "album": "Radioactive", "duration": 276}));
-        assert!(score_catalog_candidate(&wanted, &album).score > score_catalog_candidate(&wanted, &single).score);
-        let by_isrc = Wanted { isrc: Some("usum1".into()), ..Wanted::new("x", &["y"]) };
-        assert_eq!(score_catalog_candidate(&by_isrc, &m(json!({"isrc": "USUM1"}))).score, 100.0);
+        let wanted = Wanted {
+            album: Some("Night Visions".into()),
+            ..Wanted::new("Radioactive", &["Imagine Dragons"])
+        };
+        let album = m(
+            json!({"title": "Radioactive", "artists": ["Imagine Dragons"], "album": "Night Visions", "duration": 187}),
+        );
+        let single = m(
+            json!({"title": "Radioactive", "artists": ["Imagine Dragons"], "album": "Radioactive", "duration": 276}),
+        );
+        assert!(
+            score_catalog_candidate(&wanted, &album).score
+                > score_catalog_candidate(&wanted, &single).score
+        );
+        let by_isrc = Wanted {
+            isrc: Some("usum1".into()),
+            ..Wanted::new("x", &["y"])
+        };
+        assert_eq!(
+            score_catalog_candidate(&by_isrc, &m(json!({"isrc": "USUM1"}))).score,
+            100.0
+        );
     }
 
     #[test]
     fn catalog_scoring_without_album_prefers_album_release_over_single() {
         let wanted = Wanted::new("Radioactive", &["Imagine Dragons"]);
-        let album = m(json!({"title": "Radioactive", "artists": ["Imagine Dragons"], "album": "Night Visions"}));
-        let single = m(json!({"title": "Radioactive", "artists": ["Imagine Dragons"], "album": "Radioactive"}));
-        assert!(score_catalog_candidate(&wanted, &album).score > score_catalog_candidate(&wanted, &single).score);
+        let album = m(
+            json!({"title": "Radioactive", "artists": ["Imagine Dragons"], "album": "Night Visions"}),
+        );
+        let single = m(
+            json!({"title": "Radioactive", "artists": ["Imagine Dragons"], "album": "Radioactive"}),
+        );
+        assert!(
+            score_catalog_candidate(&wanted, &album).score
+                > score_catalog_candidate(&wanted, &single).score
+        );
     }
 
     #[test]
     fn source_scoring_rejects_minus_wrong_duration_and_wrong_artist() {
-        let wanted = Wanted { duration: Some(177.0), ..Wanted::new("Black Water", &["FORTUNA 812"]) };
+        let wanted = Wanted {
+            duration: Some(177.0),
+            ..Wanted::new("Black Water", &["FORTUNA 812"])
+        };
         let ok = src(&wanted, "Black Water", "FORTUNA 812 - Topic", Some(178.0));
         assert!(ok.rejected.is_none() && ok.score > 70.0, "{ok:?}");
-        assert!(src(&wanted, "FORTUNA 812 - Black Water (минус)", "beats", Some(177.0)).rejected.is_some());
-        assert_eq!(src(&wanted, "Black Water", "FORTUNA 812 - Topic", Some(240.0)).rejected, Some("duration"));
-        assert_eq!(src(&wanted, "Black Water", "Doobie Brothers", Some(177.0)).rejected, Some("artist"));
+        assert!(
+            src(
+                &wanted,
+                "FORTUNA 812 - Black Water (минус)",
+                "beats",
+                Some(177.0)
+            )
+            .rejected
+            .is_some()
+        );
+        assert_eq!(
+            src(&wanted, "Black Water", "FORTUNA 812 - Topic", Some(240.0)).rejected,
+            Some("duration")
+        );
+        assert_eq!(
+            src(&wanted, "Black Water", "Doobie Brothers", Some(177.0)).rejected,
+            Some("artist")
+        );
     }
 
     #[test]
     fn source_scoring_reads_artist_from_video_title_and_prefers_topic() {
-        let wanted = Wanted { duration: Some(124.0), ..Wanted::new("Порезы на руках", &["Юпи"]) };
-        let video = src(&wanted, "Юпи - Порезы на руках (Official Video)", "Random Uploads", Some(125.0));
+        let wanted = Wanted {
+            duration: Some(124.0),
+            ..Wanted::new("Порезы на руках", &["Юпи"])
+        };
+        let video = src(
+            &wanted,
+            "Юпи - Порезы на руках (Official Video)",
+            "Random Uploads",
+            Some(125.0),
+        );
         let topic = src(&wanted, "Порезы на руках", "Юпи - Topic", Some(124.0));
         assert!(video.rejected.is_none() && topic.rejected.is_none());
         assert!(topic.score > video.score);
@@ -631,13 +878,23 @@ mod tests {
 
     #[test]
     fn source_scoring_allows_version_present_in_request() {
-        let wanted = Wanted { duration: Some(300.0), ..Wanted::new("Song (Live)", &["Band"]) };
-        assert!(src(&wanted, "Band - Song (Live)", "Band", Some(301.0)).rejected.is_none());
+        let wanted = Wanted {
+            duration: Some(300.0),
+            ..Wanted::new("Song (Live)", &["Band"])
+        };
+        assert!(
+            src(&wanted, "Band - Song (Live)", "Band", Some(301.0))
+                .rejected
+                .is_none()
+        );
     }
 
     #[test]
     fn one_letter_artist_does_not_erase_the_title() {
-        let wanted = Wanted { duration: Some(200.0), ..Wanted::new("Ave Maria", &["A"]) };
+        let wanted = Wanted {
+            duration: Some(200.0),
+            ..Wanted::new("Ave Maria", &["A"])
+        };
         let scored = src(&wanted, "Ave Maria", "A - Topic", Some(200.0));
         assert!(scored.rejected.is_none(), "{scored:?}");
     }
@@ -645,9 +902,21 @@ mod tests {
     #[test]
     fn relevance_supports_prefixes_and_cyrillic() {
         assert_eq!(relevance("юпи порезы", &["Юпи", "Порезы на руках"]), 1.0);
-        assert_eq!(relevance("юпи порезы", &["Естраден Оркестър", "Всичко започна през юни"]), 0.0);
-        assert_eq!(relevance("big ba", &["Big Baby Tape", "Gimme The Loot"]), 1.0);
-        assert_eq!(relevance("big baby tape kizaru", &["Big Baby Tape", "Bandana"]), 0.75);
+        assert_eq!(
+            relevance(
+                "юпи порезы",
+                &["Естраден Оркестър", "Всичко започна през юни"]
+            ),
+            0.0
+        );
+        assert_eq!(
+            relevance("big ba", &["Big Baby Tape", "Gimme The Loot"]),
+            1.0
+        );
+        assert_eq!(
+            relevance("big baby tape kizaru", &["Big Baby Tape", "Bandana"]),
+            0.75
+        );
     }
 
     #[test]
@@ -664,24 +933,62 @@ mod tests {
     #[test]
     fn import_sources_need_the_same_title() {
         let cases: &[(&str, &[&str], &str, &str, bool)] = &[
-            ("25 (Interlude)", &["Кишлак"], "15 (Interlude)", "Кишлак", false),
+            (
+                "25 (Interlude)",
+                &["Кишлак"],
+                "15 (Interlude)",
+                "Кишлак",
+                false,
+            ),
             ("BARBIE", &["GONE.Fludd"], "RARI LOVE", "GONE.Fludd", false),
             ("Ламбада", &["N1NT3ND0"], "Пуля за брата", "N1NT3ND0", false),
-            ("Вуаля", &["Мэйби Бэйби", "Дора"], "МЭЙБИ БЭЙБИ, дора — Вуаля (1 час)", "fz1k", false),
-            ("awake", &["russianmafiaextra"], "russianmafiaextra x cowboyclicker – awake", "cowboyclick", true),
-            ("きみに回帰線", &["Inabakumori"], "稲葉曇『きみに回帰線』Vo. 歌愛ユキ", "inabakumori", true),
-            ("Деструктив [Бонус]", &["DK", "RAM"], "Диструктив [Бонус] (feat. RAM)", "DK", true),
+            (
+                "Вуаля",
+                &["Мэйби Бэйби", "Дора"],
+                "МЭЙБИ БЭЙБИ, дора — Вуаля (1 час)",
+                "fz1k",
+                false,
+            ),
+            (
+                "awake",
+                &["russianmafiaextra"],
+                "russianmafiaextra x cowboyclicker – awake",
+                "cowboyclick",
+                true,
+            ),
+            (
+                "きみに回帰線",
+                &["Inabakumori"],
+                "稲葉曇『きみに回帰線』Vo. 歌愛ユキ",
+                "inabakumori",
+                true,
+            ),
+            (
+                "Деструктив [Бонус]",
+                &["DK", "RAM"],
+                "Диструктив [Бонус] (feat. RAM)",
+                "DK",
+                true,
+            ),
         ];
         for (title, artists, video, uploader, ok) in cases {
             let scored = src(&Wanted::new(title, artists), video, uploader, None);
-            assert_eq!(scored.rejected.is_none(), *ok, "{title} vs {video}: {scored:?}");
+            assert_eq!(
+                scored.rejected.is_none(),
+                *ok,
+                "{title} vs {video}: {scored:?}"
+            );
         }
     }
 
     #[test]
     fn title_matches_cases() {
         assert!(title_matches("Пора домой", "Pora Domoy", 0.8));
-        assert!(title_matches("Hella Quality", "Hella Quality (feat. Bato)", 0.8));
+        assert!(title_matches(
+            "Hella Quality",
+            "Hella Quality (feat. Bato)",
+            0.8
+        ));
         assert!(!title_matches("Расстройство", "Временно", 0.8));
         assert!(!title_matches("25 (Interlude)", "15 (Interlude)", 0.8));
     }

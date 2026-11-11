@@ -46,11 +46,21 @@ pub struct AuthResult {
 
 impl AuthResult {
     fn ok() -> Self {
-        Self { ok: true, unavailable: false, code: 0, message: String::new() }
+        Self {
+            ok: true,
+            unavailable: false,
+            code: 0,
+            message: String::new(),
+        }
     }
 
     fn failed(code: i64, message: &str) -> Self {
-        Self { ok: false, unavailable: false, code, message: message.into() }
+        Self {
+            ok: false,
+            unavailable: false,
+            code,
+            message: message.into(),
+        }
     }
 }
 
@@ -103,7 +113,12 @@ impl Navidrome {
 
     // ------------------------------------------------------------ JSON calls
     /// Call `method` and return the `subsonic-response` object.
-    pub async fn call(&self, method: &str, params: &Params, extra: &[(&str, &str)]) -> Result<Json> {
+    pub async fn call(
+        &self,
+        method: &str,
+        params: &Params,
+        extra: &[(&str, &str)],
+    ) -> Result<Json> {
         self.call_many(method, params, &[], extra).await
     }
 
@@ -135,18 +150,34 @@ impl Navidrome {
             query = query.with("v", "1.16.1");
         }
         let url = format!("{}/rest/{method}?{}", self.base_url, query.encode());
-        let response = self.api.get(&url).timeout(timeout).send().await.map_err(|e| NdError::Unavailable(format!("{method}: {e}")))?;
+        let response = self
+            .api
+            .get(&url)
+            .timeout(timeout)
+            .send()
+            .await
+            .map_err(|e| NdError::Unavailable(format!("{method}: {e}")))?;
         let status = response.status();
-        let raw = response.bytes().await.map_err(|e| NdError::Unavailable(format!("{method}: {e}")))?;
+        let raw = response
+            .bytes()
+            .await
+            .map_err(|e| NdError::Unavailable(format!("{method}: {e}")))?;
         let root = serde_json::from_slice::<Value>(&raw)
             .ok()
-            .and_then(|v| v.get("subsonic-response").and_then(Value::as_object).cloned())
-            .ok_or_else(|| NdError::Unavailable(format!("{method}: HTTP {status}, unexpected response")))?;
+            .and_then(|v| {
+                v.get("subsonic-response")
+                    .and_then(Value::as_object)
+                    .cloned()
+            })
+            .ok_or_else(|| {
+                NdError::Unavailable(format!("{method}: HTTP {status}, unexpected response"))
+            })?;
         if root.get("status").and_then(Value::as_str) != Some("ok") {
             let error = crate::util::obj(root.get("error"));
             return Err(NdError::Upstream {
                 code: error.get("code").and_then(Value::as_i64).unwrap_or(0),
-                message: crate::util::opt_str(error.get("message")).unwrap_or_else(|| "failed".into()),
+                message: crate::util::opt_str(error.get("message"))
+                    .unwrap_or_else(|| "failed".into()),
             });
         }
         Ok(root)
@@ -154,7 +185,10 @@ impl Navidrome {
 
     // ------------------------------------------------------------------ auth
     fn auth_key(params: &Params) -> Vec<String> {
-        ["u", "p", "t", "s", "apiKey"].iter().map(|k| params.get(k).to_string()).collect()
+        ["u", "p", "t", "s", "apiKey"]
+            .iter()
+            .map(|k| params.get(k).to_string())
+            .collect()
     }
 
     /// Validate the caller's credentials against Navidrome (cached).
@@ -172,16 +206,24 @@ impl Navidrome {
             }
             return result;
         }
-        let root = match self.get("ping", params.credentials(), Duration::from_secs(10)).await {
+        let root = match self
+            .get("ping", params.credentials(), Duration::from_secs(10))
+            .await
+        {
             Ok(root) => root,
             Err(NdError::Upstream { code, message }) => {
                 let result = AuthResult::failed(code, &message);
-                self.auth_cache.lock().insert(key, (now + Duration::from_secs(15), result.clone()));
+                self.auth_cache
+                    .lock()
+                    .insert(key, (now + Duration::from_secs(15), result.clone()));
                 return result;
             }
             Err(NdError::Unavailable(e)) => {
                 tracing::warn!("auth check failed, Navidrome unavailable: {e}");
-                return AuthResult { unavailable: true, ..AuthResult::failed(0, "Navidrome is unavailable") };
+                return AuthResult {
+                    unavailable: true,
+                    ..AuthResult::failed(0, "Navidrome is unavailable")
+                };
             }
         };
         self.identity.write().update_from(&root);
@@ -196,7 +238,9 @@ impl Navidrome {
     }
 
     fn remember(&self, params: &Params) {
-        self.user_credentials.write().insert(params.username().to_string(), params.credentials());
+        self.user_credentials
+            .write()
+            .insert(params.username().to_string(), params.credentials());
     }
 
     pub fn credentials_for(&self, username: &str) -> Option<Params> {
@@ -211,7 +255,14 @@ impl Navidrome {
     pub async fn refresh_identity(&self) {
         let url = format!("{}/rest/ping?f=json", self.base_url);
         let result = async {
-            let v: Value = self.api.get(&url).timeout(Duration::from_secs(10)).send().await?.json().await?;
+            let v: Value = self
+                .api
+                .get(&url)
+                .timeout(Duration::from_secs(10))
+                .send()
+                .await?
+                .json()
+                .await?;
             Ok::<_, reqwest::Error>(v)
         }
         .await;
@@ -247,7 +298,11 @@ impl Navidrome {
             headers.insert("x-forwarded-proto", HeaderValue::from_static("http"));
         }
         if let Some(remote) = req.remote {
-            let value = match req.headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+            let value = match req
+                .headers
+                .get("x-forwarded-for")
+                .and_then(|v| v.to_str().ok())
+            {
                 Some(prior) => format!("{prior}, {remote}"),
                 None => remote.to_string(),
             };
@@ -266,18 +321,31 @@ impl Navidrome {
                 tracing::warn!("passthrough {} failed: {e}", redact(&target));
                 NdError::Unavailable(e.to_string())
             })?;
-        let mut builder = Response::builder().status(StatusCode::from_u16(upstream.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY));
+        let mut builder = Response::builder().status(
+            StatusCode::from_u16(upstream.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY),
+        );
         for (k, v) in upstream.headers() {
             if !HOP_BY_HOP.contains(&k.as_str()) {
                 builder = builder.header(k, v);
             }
         }
         // A malformed upstream length is dropped and the body goes out chunked.
-        if let Some(len) = upstream.headers().get("content-length").and_then(|v| v.to_str().ok()).filter(|v| v.parse::<u64>().is_ok()) {
+        if let Some(len) = upstream
+            .headers()
+            .get("content-length")
+            .and_then(|v| v.to_str().ok())
+            .filter(|v| v.parse::<u64>().is_ok())
+        {
             builder = builder.header(HeaderName::from_static("content-length"), len);
         }
-        let body = if req.method == Method::HEAD { Body::empty() } else { Body::from_stream(upstream.bytes_stream()) };
-        builder.body(body).map_err(|e| NdError::Unavailable(e.to_string()))
+        let body = if req.method == Method::HEAD {
+            Body::empty()
+        } else {
+            Body::from_stream(upstream.bytes_stream())
+        };
+        builder
+            .body(body)
+            .map_err(|e| NdError::Unavailable(e.to_string()))
     }
 }
 
@@ -300,7 +368,13 @@ mod tests {
 
     async fn upstream() -> (FakeNavidrome, Navidrome, crate::testutil::Server) {
         let fake = FakeNavidrome::default();
-        fake.add_song(crate::testutil::nd_song("L1", "Starboy", "The Weeknd", "Album", "al1"));
+        fake.add_song(crate::testutil::nd_song(
+            "L1",
+            "Starboy",
+            "The Weeknd",
+            "Album",
+            "al1",
+        ));
         let server = serve(fake.router()).await;
         let nav = Navidrome::new(&server.url, 60.0);
         (fake, nav, server)
@@ -309,7 +383,13 @@ mod tests {
     #[tokio::test]
     async fn authenticate_caches_and_remembers_credentials() {
         let (fake, nav, _s) = upstream().await;
-        let params = Params::parse(&format!("u=alice&{}&v=1.16.1&c=test&f=json", md5_token("alicepw", "abc")), "");
+        let params = Params::parse(
+            &format!(
+                "u=alice&{}&v=1.16.1&c=test&f=json",
+                md5_token("alicepw", "abc")
+            ),
+            "",
+        );
         assert!(nav.authenticate(&params).await.ok);
         assert!(nav.authenticate(&params).await.ok);
         assert_eq!(fake.count("ping"), 1);
@@ -345,7 +425,10 @@ mod tests {
         let url = format!("http://{}", listener.local_addr().unwrap());
         drop(listener);
         let nav = Navidrome::new(&url, 60.0);
-        assert!(matches!(nav.call("ping", &Params::parse("u=a&p=b", ""), &[]).await, Err(NdError::Unavailable(_))));
+        assert!(matches!(
+            nav.call("ping", &Params::parse("u=a&p=b", ""), &[]).await,
+            Err(NdError::Unavailable(_))
+        ));
         let result = nav.authenticate(&Params::parse("u=a&p=b", "")).await;
         assert!(result.unavailable && !result.ok);
     }
@@ -360,16 +443,33 @@ mod tests {
                 let nav = nav.clone();
                 async move {
                     let (parts, body) = req.into_parts();
-                    let pq = parts.uri.path_and_query().map(|p| p.as_str().to_string()).unwrap_or_default();
-                    let incoming = Incoming { method: &parts.method, path_and_query: &pq, headers: &parts.headers, remote: None };
-                    nav.passthrough(incoming, reqwest::Body::wrap_stream(body.into_data_stream())).await.unwrap()
+                    let pq = parts
+                        .uri
+                        .path_and_query()
+                        .map(|p| p.as_str().to_string())
+                        .unwrap_or_default();
+                    let incoming = Incoming {
+                        method: &parts.method,
+                        path_and_query: &pq,
+                        headers: &parts.headers,
+                        remote: None,
+                    };
+                    nav.passthrough(
+                        incoming,
+                        reqwest::Body::wrap_stream(body.into_data_stream()),
+                    )
+                    .await
+                    .unwrap()
                 }
             }
         });
         let proxy = serve(relay).await;
         let http = reqwest::Client::new();
         let resp = http
-            .get(format!("{}/rest/stream.view?u=alice&p=alicepw&id=L1", proxy.url))
+            .get(format!(
+                "{}/rest/stream.view?u=alice&p=alicepw&id=L1",
+                proxy.url
+            ))
             .header("Range", "bytes=10-19")
             .send()
             .await
@@ -378,13 +478,30 @@ mod tests {
         assert_eq!(resp.headers()["content-range"], "bytes 10-19/50000");
         assert_eq!(resp.headers()["content-length"], "10");
         assert_eq!(resp.bytes().await.unwrap().len(), 10);
-        let ui = http.get(format!("{}/app/", proxy.url)).header("Host", "music.example.org").send().await.unwrap();
+        let ui = http
+            .get(format!("{}/app/", proxy.url))
+            .header("Host", "music.example.org")
+            .send()
+            .await
+            .unwrap();
         assert_eq!(ui.headers()["x-seen-host"], "music.example.org");
         assert_eq!(ui.headers()["x-seen-encoding"], "identity");
         assert_eq!(ui.text().await.unwrap(), "navidrome ui /app/");
-        let gz = http.get(format!("{}/app/", proxy.url)).header("Accept-Encoding", "gzip").send().await.unwrap();
+        let gz = http
+            .get(format!("{}/app/", proxy.url))
+            .header("Accept-Encoding", "gzip")
+            .send()
+            .await
+            .unwrap();
         assert_eq!(gz.headers()["x-seen-encoding"], "gzip");
-        let head = http.head(format!("{}/rest/stream.view?u=alice&p=alicepw&id=L1", proxy.url)).send().await.unwrap();
+        let head = http
+            .head(format!(
+                "{}/rest/stream.view?u=alice&p=alicepw&id=L1",
+                proxy.url
+            ))
+            .send()
+            .await
+            .unwrap();
         assert_eq!(head.headers()["content-length"], "50000");
     }
 }

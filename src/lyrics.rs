@@ -8,7 +8,11 @@ use std::time::Duration;
 pub const LRCLIB: &str = "https://lrclib.net/api/get";
 
 /// `("lrc" | "txt", text)` or None.
-pub async fn fetch(http: &reqwest::Client, meta: &Json, base_url: &str) -> Option<(&'static str, String)> {
+pub async fn fetch(
+    http: &reqwest::Client,
+    meta: &Json,
+    base_url: &str,
+) -> Option<(&'static str, String)> {
     let artist = match meta.get("artists") {
         Some(Value::Array(a)) if !a.is_empty() => as_str(a.first()),
         _ => as_str(meta.get("artist")),
@@ -24,14 +28,21 @@ pub async fn fetch(http: &reqwest::Client, meta: &Json, base_url: &str) -> Optio
         .get(base_url)
         .query(&query)
         .timeout(Duration::from_secs(15))
-        .header("User-Agent", "navidrome-proxy/3 (https://github.com/daz9e/navidrome-proxy)")
+        .header(
+            "User-Agent",
+            "navidrome-proxy/3 (https://github.com/daz9e/navidrome-proxy)",
+        )
         .send()
         .await;
     let data: Value = match response {
         Ok(r) if r.status() == reqwest::StatusCode::OK => r.json().await.ok()?,
         Ok(_) => return None,
         Err(e) => {
-            tracing::debug!("lyrics lookup failed for {}: {}", as_str(meta.get("title")), crate::util::chain(&e));
+            tracing::debug!(
+                "lyrics lookup failed for {}: {}",
+                as_str(meta.get("title")),
+                crate::util::chain(&e)
+            );
             return None;
         }
     };
@@ -62,21 +73,31 @@ mod tests {
     async fn prefers_synced_lyrics_and_skips_instrumentals() {
         let router = Router::new().route(
             "/get",
-            axum::routing::get(|q: axum::extract::Query<std::collections::HashMap<String, String>>| async move {
-                axum::Json(match q.get("track_name").map(String::as_str) {
-                    Some("Synced") => json!({"syncedLyrics": "[00:01.00] la", "plainLyrics": "la"}),
-                    Some("Plain") => json!({"plainLyrics": "la", "syncedLyrics": null}),
-                    Some("Instr") => json!({"instrumental": true, "plainLyrics": "x"}),
-                    _ => json!({"code": 404}),
-                })
-            }),
+            axum::routing::get(
+                |q: axum::extract::Query<std::collections::HashMap<String, String>>| async move {
+                    axum::Json(match q.get("track_name").map(String::as_str) {
+                        Some("Synced") => {
+                            json!({"syncedLyrics": "[00:01.00] la", "plainLyrics": "la"})
+                        }
+                        Some("Plain") => json!({"plainLyrics": "la", "syncedLyrics": null}),
+                        Some("Instr") => json!({"instrumental": true, "plainLyrics": "x"}),
+                        _ => json!({"code": 404}),
+                    })
+                },
+            ),
         );
         let server = serve(router).await;
         let url = format!("{}/get", server.url);
         let http = reqwest::Client::new();
         let meta = |t: &str| m(json!({"title": t, "artists": ["A"], "duration": 200.7}));
-        assert_eq!(fetch(&http, &meta("Synced"), &url).await, Some(("lrc", "[00:01.00] la".into())));
-        assert_eq!(fetch(&http, &meta("Plain"), &url).await, Some(("txt", "la".into())));
+        assert_eq!(
+            fetch(&http, &meta("Synced"), &url).await,
+            Some(("lrc", "[00:01.00] la".into()))
+        );
+        assert_eq!(
+            fetch(&http, &meta("Plain"), &url).await,
+            Some(("txt", "la".into()))
+        );
         assert_eq!(fetch(&http, &meta("Instr"), &url).await, None);
         assert_eq!(fetch(&http, &meta("Nope"), &url).await, None);
 

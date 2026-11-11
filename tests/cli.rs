@@ -23,7 +23,11 @@ fn run(dir: &Path, args: &[&str]) -> Output {
 }
 
 fn json_of(out: Output) -> Value {
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     serde_json::from_slice(&out.stdout).unwrap()
 }
 
@@ -35,14 +39,23 @@ fn refused(out: Output) -> String {
 #[test]
 fn check_db_and_relayout_dry_run() {
     let dir = tempfile::tempdir().unwrap();
-    assert_eq!(json_of(run(dir.path(), &["check-db"])), json!({"ok": true, "problems": []}));
-    assert_eq!(json_of(run(dir.path(), &["relayout", "--dry-run"])), json!({"moved": 0, "kept": 0, "missing": 0, "skipped": 0}));
+    assert_eq!(
+        json_of(run(dir.path(), &["check-db"])),
+        json!({"ok": true, "problems": []})
+    );
+    assert_eq!(
+        json_of(run(dir.path(), &["relayout", "--dry-run"])),
+        json!({"moved": 0, "kept": 0, "missing": 0, "skipped": 0})
+    );
 }
 
 #[test]
 fn remux_dash_needs_no_database() {
     let dir = tempfile::tempdir().unwrap();
-    assert_eq!(json_of(run(dir.path(), &["remux-dash", "--dry-run"]))["checked"], 0);
+    assert_eq!(
+        json_of(run(dir.path(), &["remux-dash", "--dry-run"]))["checked"],
+        0
+    );
     assert!(!dir.path().join("data/proxy.sqlite3").exists());
 }
 

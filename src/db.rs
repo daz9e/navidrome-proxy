@@ -11,7 +11,10 @@
 
 use crate::util::{Json, now};
 use parking_lot::Mutex;
-use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params, params_from_iter, types::Value as Sql};
+use rusqlite::{
+    Connection, OptionalExtension, Row, TransactionBehavior, params, params_from_iter,
+    types::Value as Sql,
+};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::os::fd::AsRawFd;
@@ -51,14 +54,22 @@ pub struct OwnerLock {
 
 impl OwnerLock {
     pub fn new(db_path: &Path) -> Self {
-        Self { path: PathBuf::from(format!("{}.lock", db_path.display())), file: None }
+        Self {
+            path: PathBuf::from(format!("{}.lock", db_path.display())),
+            file: None,
+        }
     }
 
     pub fn acquire(&mut self) -> Result<()> {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let file = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(&self.path)?;
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&self.path)?;
         // SAFETY: flock on a valid, owned descriptor.
         if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
             return Err(DbError::Busy(format!(
@@ -211,7 +222,11 @@ impl Track {
             return list.iter().map(|v| crate::util::as_str(Some(v))).collect();
         }
         let artist = self.artist();
-        if artist.is_empty() { vec![] } else { vec![artist] }
+        if artist.is_empty() {
+            vec![]
+        } else {
+            vec![artist]
+        }
     }
 
     pub fn duration(&self) -> f64 {
@@ -219,7 +234,11 @@ impl Track {
     }
 
     pub fn is_ready(&self) -> bool {
-        self.status == "ready" && self.file.as_deref().is_some_and(|f| !f.is_empty() && Path::new(f).is_file())
+        self.status == "ready"
+            && self
+                .file
+                .as_deref()
+                .is_some_and(|f| !f.is_empty() && Path::new(f).is_file())
     }
 }
 
@@ -262,7 +281,12 @@ impl Field {
             Field::LocalId(v) => ("local_id", text(v)),
             Field::Source(v) => ("source", text(v)),
             Field::SourceRef(v) => ("source_ref", text(v)),
-            Field::Audio(v) => ("audio", v.as_ref().map(|a| Sql::Text(Value::Object(a.clone()).to_string())).unwrap_or(Sql::Null)),
+            Field::Audio(v) => (
+                "audio",
+                v.as_ref()
+                    .map(|a| Sql::Text(Value::Object(a.clone()).to_string()))
+                    .unwrap_or(Sql::Null),
+            ),
             Field::Error(v) => ("error", text(v)),
             Field::Attempts(n) => ("attempts", Sql::Integer(*n)),
         }
@@ -321,7 +345,11 @@ fn sql_text(v: Option<&Value>) -> Sql {
 
 fn dedupe<'a>(items: impl IntoIterator<Item = &'a str>) -> Vec<String> {
     let mut seen = HashSet::new();
-    items.into_iter().filter(|i| seen.insert(*i)).map(String::from).collect()
+    items
+        .into_iter()
+        .filter(|i| seen.insert(*i))
+        .map(String::from)
+        .collect()
 }
 
 /// Thread-safe facade over one SQLite connection.
@@ -340,13 +368,20 @@ impl Store {
         if !memory && let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let conn = if memory { Connection::open_in_memory()? } else { Connection::open(path)? };
+        let conn = if memory {
+            Connection::open_in_memory()?
+        } else {
+            Connection::open(path)?
+        };
         conn.busy_timeout(std::time::Duration::from_secs(10))?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.execute_batch(SCHEMA)?;
-        let store = Self { path: path.to_path_buf(), conn: Mutex::new(conn) };
+        let store = Self {
+            path: path.to_path_buf(),
+            conn: Mutex::new(conn),
+        };
         store.migrate()?;
         Ok(store)
     }
@@ -363,7 +398,10 @@ impl Store {
             )
             .map(|_| ())
         })?;
-        let current: i64 = self.get_meta("schema_version").and_then(|v| v.parse().ok()).unwrap_or(SCHEMA_VERSION);
+        let current: i64 = self
+            .get_meta("schema_version")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(SCHEMA_VERSION);
         if current > SCHEMA_VERSION {
             return Err(DbError::SchemaTooNew(format!(
                 "{} has schema version {current}, this navidrome-proxy knows {SCHEMA_VERSION}; \
@@ -376,7 +414,10 @@ impl Store {
                 for statement in *statements {
                     c.execute_batch(statement)?;
                 }
-                c.execute("UPDATE meta SET value = ? WHERE key = 'schema_version'", [version.to_string()])?;
+                c.execute(
+                    "UPDATE meta SET value = ? WHERE key = 'schema_version'",
+                    [version.to_string()],
+                )?;
                 Ok(())
             })?;
         }
@@ -385,11 +426,18 @@ impl Store {
 
     /// Problems reported by SQLite (empty when the database is healthy).
     pub fn integrity(&self, quick: bool) -> Vec<String> {
-        let pragma = if quick { "quick_check" } else { "integrity_check" };
+        let pragma = if quick {
+            "quick_check"
+        } else {
+            "integrity_check"
+        };
         let conn = self.conn.lock();
         let result = conn
             .prepare(&format!("PRAGMA {pragma}"))
-            .and_then(|mut st| st.query_map([], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>());
+            .and_then(|mut st| {
+                st.query_map([], |r| r.get::<_, String>(0))?
+                    .collect::<rusqlite::Result<Vec<_>>>()
+            });
         match result {
             Ok(problems) if problems == ["ok"] => vec![],
             Ok(problems) => problems,
@@ -422,7 +470,9 @@ impl Store {
         let mut old: Vec<PathBuf> = std::fs::read_dir(directory)?
             .filter_map(|e| e.ok().map(|e| e.path()))
             .filter(|p| {
-                p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("proxy-") && n.ends_with(".sqlite3"))
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with("proxy-") && n.ends_with(".sqlite3"))
             })
             .collect();
         old.sort();
@@ -442,9 +492,16 @@ impl Store {
         Ok(out)
     }
 
-    fn query<T>(&self, sql: &str, args: impl rusqlite::Params, map: impl FnMut(&Row) -> rusqlite::Result<T>) -> Vec<T> {
+    fn query<T>(
+        &self,
+        sql: &str,
+        args: impl rusqlite::Params,
+        map: impl FnMut(&Row) -> rusqlite::Result<T>,
+    ) -> Vec<T> {
         let conn = self.conn.lock();
-        let result = conn.prepare_cached(sql).and_then(|mut st| st.query_map(args, map)?.collect());
+        let result = conn
+            .prepare_cached(sql)
+            .and_then(|mut st| st.query_map(args, map)?.collect());
         result.unwrap_or_else(|e| {
             tracing::error!("query failed: {e}: {sql}");
             Vec::new()
@@ -459,18 +516,29 @@ impl Store {
     }
 
     /// `SELECT ... WHERE col IN (...)` in chunks of 500 parameters.
-    fn query_in<T>(&self, sql_prefix: &str, keys: &[String], mut map: impl FnMut(&Row) -> rusqlite::Result<T>) -> Vec<T> {
+    fn query_in<T>(
+        &self,
+        sql_prefix: &str,
+        keys: &[String],
+        mut map: impl FnMut(&Row) -> rusqlite::Result<T>,
+    ) -> Vec<T> {
         let mut out = Vec::new();
         for chunk in keys.chunks(500) {
             let marks = vec!["?"; chunk.len()].join(",");
-            out.extend(self.query(&format!("{sql_prefix} ({marks})"), params_from_iter(chunk), &mut map));
+            out.extend(self.query(
+                &format!("{sql_prefix} ({marks})"),
+                params_from_iter(chunk),
+                &mut map,
+            ));
         }
         out
     }
 
     // ------------------------------------------------------------------ meta
     pub fn get_meta(&self, key: &str) -> Option<String> {
-        self.query("SELECT value FROM meta WHERE key = ?", [key], |r| r.get(0)).into_iter().next()
+        self.query("SELECT value FROM meta WHERE key = ?", [key], |r| r.get(0))
+            .into_iter()
+            .next()
     }
 
     pub fn set_meta(&self, key: &str, value: &str) {
@@ -482,7 +550,9 @@ impl Store {
 
     // ---------------------------------------------------------------- tracks
     pub fn get_track(&self, track_id: &str) -> Option<Track> {
-        self.query("SELECT * FROM tracks WHERE id = ?", [track_id], track_row).into_iter().next()
+        self.query("SELECT * FROM tracks WHERE id = ?", [track_id], track_row)
+            .into_iter()
+            .next()
     }
 
     pub fn get_tracks<'a>(&self, ids: impl IntoIterator<Item = &'a str>) -> HashMap<String, Track> {
@@ -493,10 +563,17 @@ impl Store {
     }
 
     fn remember_in(c: &Connection, track_id: &str, meta: &Json, now: f64) -> rusqlite::Result<()> {
-        let clean: Json = meta.iter().filter(|(_, v)| !v.is_null()).map(|(k, v)| (k.clone(), v.clone())).collect();
+        let clean: Json = meta
+            .iter()
+            .filter(|(_, v)| !v.is_null())
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
         let album = sql_text(clean.get("album_id"));
-        let existing: Option<Option<String>> =
-            c.query_row("SELECT meta FROM tracks WHERE id = ?", [track_id], |r| r.get(0)).optional()?;
+        let existing: Option<Option<String>> = c
+            .query_row("SELECT meta FROM tracks WHERE id = ?", [track_id], |r| {
+                r.get(0)
+            })
+            .optional()?;
         match existing {
             None => {
                 c.execute(
@@ -531,7 +608,11 @@ impl Store {
 
     pub fn remember_tracks(&self, items: &[(String, Json)]) {
         let t = now();
-        if let Err(e) = self.tx(|c| items.iter().try_for_each(|(id, meta)| Self::remember_in(c, id, meta, t))) {
+        if let Err(e) = self.tx(|c| {
+            items
+                .iter()
+                .try_for_each(|(id, meta)| Self::remember_in(c, id, meta, t))
+        }) {
             tracing::error!("remember_tracks: {e}");
         }
     }
@@ -545,16 +626,28 @@ impl Store {
         values.push(Sql::Real(now()));
         values.push(Sql::Text(track_id.into()));
         self.write(
-            &format!("UPDATE tracks SET {}, updated_at = ? WHERE id = ?", assignments.join(", ")),
+            &format!(
+                "UPDATE tracks SET {}, updated_at = ? WHERE id = ?",
+                assignments.join(", ")
+            ),
             params_from_iter(values),
         );
     }
 
     pub fn track_by_local_id(&self, local_id: &str) -> Option<Track> {
-        self.query("SELECT * FROM tracks WHERE local_id = ? LIMIT 1", [local_id], track_row).into_iter().next()
+        self.query(
+            "SELECT * FROM tracks WHERE local_id = ? LIMIT 1",
+            [local_id],
+            track_row,
+        )
+        .into_iter()
+        .next()
     }
 
-    pub fn tracks_by_local_ids<'a>(&self, ids: impl IntoIterator<Item = &'a str>) -> HashMap<String, Track> {
+    pub fn tracks_by_local_ids<'a>(
+        &self,
+        ids: impl IntoIterator<Item = &'a str>,
+    ) -> HashMap<String, Track> {
         let keys = dedupe(ids.into_iter().filter(|i| !i.is_empty()));
         self.query_in("SELECT * FROM tracks WHERE local_id IN", &keys, track_row)
             .into_iter()
@@ -563,7 +656,11 @@ impl Store {
     }
 
     pub fn tracks_in_album(&self, album_id: &str) -> Vec<Track> {
-        self.query("SELECT * FROM tracks WHERE album_id = ?", [album_id], track_row)
+        self.query(
+            "SELECT * FROM tracks WHERE album_id = ?",
+            [album_id],
+            track_row,
+        )
     }
 
     pub fn ready_track_by_artist_id(&self, artist_id: &str) -> Option<Track> {
@@ -591,14 +688,21 @@ impl Store {
     }
 
     pub fn status_counts(&self) -> HashMap<String, i64> {
-        self.query("SELECT status, COUNT(*) FROM tracks GROUP BY status", [], |r| Ok((r.get(0)?, r.get(1)?)))
-            .into_iter()
-            .collect()
+        self.query(
+            "SELECT status, COUNT(*) FROM tracks GROUP BY status",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .into_iter()
+        .collect()
     }
 
     /// After a restart nothing is downloading; such tracks wait for their requeued job.
     pub fn reset_downloading_tracks(&self) -> usize {
-        self.write("UPDATE tracks SET status = 'queued' WHERE status = 'downloading'", [])
+        self.write(
+            "UPDATE tracks SET status = 'queued' WHERE status = 'downloading'",
+            [],
+        )
     }
 
     // --------------------------------------------------------------- aliases
@@ -607,11 +711,20 @@ impl Store {
         if alias == track_id {
             return false;
         }
-        self.write("INSERT OR IGNORE INTO aliases VALUES (?, ?, ?, ?)", params![alias, track_id, how, now()]) > 0
+        self.write(
+            "INSERT OR IGNORE INTO aliases VALUES (?, ?, ?, ?)",
+            params![alias, track_id, how, now()],
+        ) > 0
     }
 
     pub fn resolve_alias(&self, alias: &str) -> Option<String> {
-        self.query("SELECT track_id FROM aliases WHERE alias = ?", [alias], |r| r.get(0)).into_iter().next()
+        self.query(
+            "SELECT track_id FROM aliases WHERE alias = ?",
+            [alias],
+            |r| r.get(0),
+        )
+        .into_iter()
+        .next()
     }
 
     pub fn aliases_of(&self, track_id: &str) -> Vec<(String, String)> {
@@ -622,20 +735,32 @@ impl Store {
         )
     }
 
-    pub fn resolve_aliases<'a>(&self, aliases: impl IntoIterator<Item = &'a str>) -> HashMap<String, String> {
-        self.query_in("SELECT alias, track_id FROM aliases WHERE alias IN", &dedupe(aliases), |r| {
-            Ok((r.get(0)?, r.get(1)?))
-        })
+    pub fn resolve_aliases<'a>(
+        &self,
+        aliases: impl IntoIterator<Item = &'a str>,
+    ) -> HashMap<String, String> {
+        self.query_in(
+            "SELECT alias, track_id FROM aliases WHERE alias IN",
+            &dedupe(aliases),
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
         .into_iter()
         .collect()
     }
 
     pub fn add_recording(&self, key: &str, track_id: &str, duration: f64) {
-        self.write("INSERT OR REPLACE INTO recordings VALUES (?, ?, ?)", params![key, track_id, duration]);
+        self.write(
+            "INSERT OR REPLACE INTO recordings VALUES (?, ?, ?)",
+            params![key, track_id, duration],
+        );
     }
 
     pub fn recordings(&self, key: &str) -> Vec<(String, f64)> {
-        self.query("SELECT track_id, duration FROM recordings WHERE key = ?", [key], |r| Ok((r.get(0)?, r.get(1)?)))
+        self.query(
+            "SELECT track_id, duration FROM recordings WHERE key = ?",
+            [key],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
     }
 
     // ------------------------------------------------------------------ jobs
@@ -643,7 +768,14 @@ impl Store {
     ///
     /// Returns true when the job is (re)queued and a worker should look at it.
     /// A running job is left alone; a failed or finished one is revived.
-    pub fn enqueue(&self, track_id: &str, kind: &str, priority: i64, reason: Option<&str>, reset_attempts: bool) -> bool {
+    pub fn enqueue(
+        &self,
+        track_id: &str,
+        kind: &str,
+        priority: i64,
+        reason: Option<&str>,
+        reset_attempts: bool,
+    ) -> bool {
         let t = now();
         self.tx(|c| {
             let row = c
@@ -697,15 +829,30 @@ impl Store {
     }
 
     pub fn get_job(&self, track_id: &str, kind: &str) -> Option<Job> {
-        self.query("SELECT * FROM jobs WHERE track_id = ? AND kind = ?", [track_id, kind], job_row).into_iter().next()
+        self.query(
+            "SELECT * FROM jobs WHERE track_id = ? AND kind = ?",
+            [track_id, kind],
+            job_row,
+        )
+        .into_iter()
+        .next()
     }
 
     pub fn jobs_in_state(&self, state: &str) -> Vec<Job> {
-        self.query("SELECT * FROM jobs WHERE state = ? ORDER BY priority, enqueued_at", [state], job_row)
+        self.query(
+            "SELECT * FROM jobs WHERE state = ? ORDER BY priority, enqueued_at",
+            [state],
+            job_row,
+        )
     }
 
     /// Atomically move the best eligible queued job to `running`.
-    pub fn claim_next_job(&self, max_priority: Option<i64>, min_priority: Option<i64>, at: Option<f64>) -> Option<Job> {
+    pub fn claim_next_job(
+        &self,
+        max_priority: Option<i64>,
+        min_priority: Option<i64>,
+        at: Option<f64>,
+    ) -> Option<Job> {
         let at = at.unwrap_or_else(now);
         let sql = "SELECT * FROM jobs WHERE state = 'queued' AND not_before <= ?1 \
                    AND priority <= ?2 AND priority >= ?3 ORDER BY priority, enqueued_at LIMIT 1";
@@ -728,7 +875,14 @@ impl Store {
         })
     }
 
-    pub fn finish_job(&self, track_id: &str, kind: &str, state: &str, error: Option<&str>, retry_at: Option<f64>) {
+    pub fn finish_job(
+        &self,
+        track_id: &str,
+        kind: &str,
+        state: &str,
+        error: Option<&str>,
+        retry_at: Option<f64>,
+    ) {
         match retry_at {
             Some(at) => self.write(
                 "UPDATE jobs SET state = 'queued', not_before = ?, error = ? WHERE track_id = ? AND kind = ?",
@@ -743,33 +897,48 @@ impl Store {
 
     /// After a restart nothing is running; put interrupted jobs back in line.
     pub fn requeue_running_jobs(&self) -> usize {
-        self.write("UPDATE jobs SET state = 'queued', not_before = 0 WHERE state = 'running'", [])
+        self.write(
+            "UPDATE jobs SET state = 'queued', not_before = 0 WHERE state = 'running'",
+            [],
+        )
     }
 
     /// The earliest *future* retry. Jobs already due are not counted: a lane that
     /// cannot claim them (they belong to the other lane) must not busy-poll.
     pub fn next_retry_time(&self) -> Option<f64> {
-        self.query("SELECT MIN(not_before) FROM jobs WHERE state = 'queued' AND not_before > ?", [now()], |r| r.get::<_, Option<f64>>(0))
-            .into_iter()
-            .next()
-            .flatten()
+        self.query(
+            "SELECT MIN(not_before) FROM jobs WHERE state = 'queued' AND not_before > ?",
+            [now()],
+            |r| r.get::<_, Option<f64>>(0),
+        )
+        .into_iter()
+        .next()
+        .flatten()
     }
 
     pub fn job_counts(&self) -> HashMap<String, i64> {
-        self.query("SELECT kind || ':' || state, COUNT(*) FROM jobs GROUP BY kind, state", [], |r| {
-            Ok((r.get(0)?, r.get(1)?))
-        })
+        self.query(
+            "SELECT kind || ':' || state, COUNT(*) FROM jobs GROUP BY kind, state",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
         .into_iter()
         .collect()
     }
 
     // --------------------------------------------------------- user intents
     pub fn add_pending_star(&self, username: &str, target: &str) {
-        self.write("INSERT OR IGNORE INTO pending_stars VALUES (?, ?, ?)", params![username, target, now()]);
+        self.write(
+            "INSERT OR IGNORE INTO pending_stars VALUES (?, ?, ?)",
+            params![username, target, now()],
+        );
     }
 
     pub fn remove_pending_star(&self, username: &str, target: &str) -> bool {
-        self.write("DELETE FROM pending_stars WHERE username = ? AND target = ?", [username, target]) > 0
+        self.write(
+            "DELETE FROM pending_stars WHERE username = ? AND target = ?",
+            [username, target],
+        ) > 0
     }
 
     pub fn pending_stars(&self, username: Option<&str>) -> Vec<(String, String, f64)> {
@@ -784,7 +953,13 @@ impl Store {
         }
     }
 
-    pub fn add_pending_scrobble(&self, username: &str, track_id: &str, when: i64, submission: bool) {
+    pub fn add_pending_scrobble(
+        &self,
+        username: &str,
+        track_id: &str,
+        when: i64,
+        submission: bool,
+    ) {
         self.write(
             "INSERT OR IGNORE INTO pending_scrobbles VALUES (?, ?, ?, ?)",
             params![username, track_id, when, submission as i64],
@@ -799,7 +974,13 @@ impl Store {
         )
     }
 
-    pub fn remove_pending_scrobble(&self, username: &str, track_id: &str, when: i64, submission: bool) {
+    pub fn remove_pending_scrobble(
+        &self,
+        username: &str,
+        track_id: &str,
+        when: i64,
+        submission: bool,
+    ) {
         self.write(
             "DELETE FROM pending_scrobbles WHERE username = ? AND track_id = ? AND time = ? AND submission = ?",
             params![username, track_id, when, submission as i64],
@@ -830,7 +1011,10 @@ impl Store {
     }
 
     pub fn add_pending_unstar(&self, username: &str, local_id: &str) {
-        self.write("INSERT OR IGNORE INTO pending_unstars VALUES (?, ?, ?)", params![username, local_id, now()]);
+        self.write(
+            "INSERT OR IGNORE INTO pending_unstars VALUES (?, ?, ?)",
+            params![username, local_id, now()],
+        );
     }
 
     pub fn pending_unstars(&self, username: &str) -> Vec<String> {
@@ -844,7 +1028,10 @@ impl Store {
     pub fn remove_pending_unstars(&self, username: &str, local_ids: &[String]) {
         let result = self.tx(|c| {
             for id in local_ids {
-                c.execute("DELETE FROM pending_unstars WHERE username = ? AND local_id = ?", [username, id])?;
+                c.execute(
+                    "DELETE FROM pending_unstars WHERE username = ? AND local_id = ?",
+                    [username, id],
+                )?;
             }
             Ok(())
         });
@@ -867,7 +1054,11 @@ impl Store {
     // ----------------------------------------------------------------- cache
     pub fn cache_get(&self, key: &str) -> Option<Value> {
         let (value, expires): (String, f64) = self
-            .query("SELECT value, expires_at FROM cache WHERE key = ?", [key], |r| Ok((r.get(0)?, r.get(1)?)))
+            .query(
+                "SELECT value, expires_at FROM cache WHERE key = ?",
+                [key],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
             .into_iter()
             .next()?;
         if expires < now() {
@@ -889,13 +1080,28 @@ impl Store {
     }
 
     // --------------------------------------------------------------- imports
-    pub fn save_import(&self, import_id: &str, username: &str, status: &str, options: &Value, rows: &Value) {
+    pub fn save_import(
+        &self,
+        import_id: &str,
+        username: &str,
+        status: &str,
+        options: &Value,
+        rows: &Value,
+    ) {
         let t = now();
         self.write(
             "INSERT INTO imports(id, username, status, options, rows, created_at, updated_at) \
              VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET status = excluded.status, \
              options = excluded.options, rows = excluded.rows, updated_at = excluded.updated_at",
-            params![import_id, username, status, options.to_string(), rows.to_string(), t, t],
+            params![
+                import_id,
+                username,
+                status,
+                options.to_string(),
+                rows.to_string(),
+                t,
+                t
+            ],
         );
     }
 
@@ -908,8 +1114,14 @@ impl Store {
             m.insert("status".into(), Value::String(r.get("status")?));
             m.insert("options".into(), parse(r.get("options")?));
             m.insert("rows".into(), parse(r.get("rows")?));
-            m.insert("created_at".into(), serde_json::json!(r.get::<_, f64>("created_at")?));
-            m.insert("updated_at".into(), serde_json::json!(r.get::<_, f64>("updated_at")?));
+            m.insert(
+                "created_at".into(),
+                serde_json::json!(r.get::<_, f64>("created_at")?),
+            );
+            m.insert(
+                "updated_at".into(),
+                serde_json::json!(r.get::<_, f64>("updated_at")?),
+            );
             Ok(m)
         })
         .into_iter()
@@ -926,7 +1138,11 @@ impl Store {
     }
 
     pub fn imports_with_playlist(&self) -> Vec<String> {
-        self.query("SELECT id FROM imports WHERE json_extract(options, '$.playlist') IS NOT NULL", [], |r| r.get(0))
+        self.query(
+            "SELECT id FROM imports WHERE json_extract(options, '$.playlist') IS NOT NULL",
+            [],
+            |r| r.get(0),
+        )
     }
 
     pub fn unfinished_imports(&self) -> Vec<Json> {
@@ -964,10 +1180,19 @@ mod tests {
     #[test]
     fn remember_merges_meta_and_keeps_state() {
         let s = Store::memory();
-        s.remember_track("deezer:1", &m(json!({"title": "A", "album_id": 5, "x": null})));
-        s.update_track("deezer:1", &[Field::status("ready"), Field::File(Some("/f".into()))]);
+        s.remember_track(
+            "deezer:1",
+            &m(json!({"title": "A", "album_id": 5, "x": null})),
+        );
+        s.update_track(
+            "deezer:1",
+            &[Field::status("ready"), Field::File(Some("/f".into()))],
+        );
         let t = s.remember_track("deezer:1", &m(json!({"artist": "B"})));
-        assert_eq!(t.meta, m(json!({"title": "A", "album_id": 5, "artist": "B"})));
+        assert_eq!(
+            t.meta,
+            m(json!({"title": "A", "album_id": 5, "artist": "B"}))
+        );
         assert_eq!(t.album_id.as_deref(), Some("5"));
         assert_eq!(t.status, "ready");
         assert_eq!(t.file.as_deref(), Some("/f"));
@@ -978,7 +1203,13 @@ mod tests {
     fn update_track_audio_is_json() {
         let s = Store::memory();
         s.remember_track("deezer:1", &Json::new());
-        s.update_track("deezer:1", &[Field::Audio(Some(m(json!({"codec": "aac"})))), Field::LocalId(Some("L".into()))]);
+        s.update_track(
+            "deezer:1",
+            &[
+                Field::Audio(Some(m(json!({"codec": "aac"})))),
+                Field::LocalId(Some("L".into())),
+            ],
+        );
         let t = s.get_track("deezer:1").unwrap();
         assert_eq!(t.audio["codec"], "aac");
         assert_eq!(s.track_by_local_id("L").unwrap().id, "deezer:1");
@@ -989,19 +1220,40 @@ mod tests {
     fn job_lifecycle() {
         let s = Store::memory();
         assert!(s.enqueue("t", "download", 2, Some("album"), false));
-        assert!(!s.enqueue("t", "download", 2, None, false), "same priority is a no-op");
-        assert!(s.enqueue("t", "download", 0, Some("play"), false), "raising priority wakes");
+        assert!(
+            !s.enqueue("t", "download", 2, None, false),
+            "same priority is a no-op"
+        );
+        assert!(
+            s.enqueue("t", "download", 0, Some("play"), false),
+            "raising priority wakes"
+        );
         let job = s.claim_next_job(Some(1), None, None).unwrap();
-        assert_eq!((job.priority, job.attempts, job.state.as_str()), (0, 1, "running"));
+        assert_eq!(
+            (job.priority, job.attempts, job.state.as_str()),
+            (0, 1, "running")
+        );
         assert!(s.claim_next_job(None, None, None).is_none());
-        assert!(!s.enqueue("t", "download", 0, None, false), "running job left alone");
+        assert!(
+            !s.enqueue("t", "download", 0, None, false),
+            "running job left alone"
+        );
         s.finish_job("t", "download", "queued", Some("boom"), Some(now() + 60.0));
-        assert!(s.claim_next_job(None, None, None).is_none(), "retry not due");
+        assert!(
+            s.claim_next_job(None, None, None).is_none(),
+            "retry not due"
+        );
         assert!(s.next_retry_time().unwrap() > now());
         s.finish_job("t", "download", "failed", Some("x"), None);
-        assert!(s.enqueue("t", "download", 1, None, true), "failed jobs are revived");
+        assert!(
+            s.enqueue("t", "download", 1, None, true),
+            "failed jobs are revived"
+        );
         let j = s.get_job("t", "download").unwrap();
-        assert_eq!((j.state.as_str(), j.attempts, j.reason.as_deref()), ("queued", 0, Some("album")));
+        assert_eq!(
+            (j.state.as_str(), j.attempts, j.reason.as_deref()),
+            ("queued", 0, Some("album"))
+        );
         assert_eq!(s.job_counts()["download:queued"], 1);
     }
 
@@ -1011,9 +1263,18 @@ mod tests {
         s.enqueue("bg", "download", 2, None, false);
         s.enqueue("p1", "download", 1, None, false);
         s.enqueue("p0", "download", 0, None, false);
-        assert_eq!(s.claim_next_job(None, Some(2), None).unwrap().track_id, "bg");
-        assert_eq!(s.claim_next_job(Some(1), None, None).unwrap().track_id, "p0");
-        assert_eq!(s.claim_next_job(Some(1), None, None).unwrap().track_id, "p1");
+        assert_eq!(
+            s.claim_next_job(None, Some(2), None).unwrap().track_id,
+            "bg"
+        );
+        assert_eq!(
+            s.claim_next_job(Some(1), None, None).unwrap().track_id,
+            "p0"
+        );
+        assert_eq!(
+            s.claim_next_job(Some(1), None, None).unwrap().track_id,
+            "p1"
+        );
         assert_eq!(s.requeue_running_jobs(), 3);
     }
 
@@ -1025,7 +1286,10 @@ mod tests {
         assert!(!s.add_alias("deezer:1", "deezer:1", "self"));
         assert_eq!(s.resolve_alias("yt:x").as_deref(), Some("deezer:1"));
         assert_eq!(s.resolve_aliases(["yt:x", "nope"]).len(), 1);
-        assert_eq!(s.aliases_of("deezer:1"), vec![("yt:x".to_string(), "source".to_string())]);
+        assert_eq!(
+            s.aliases_of("deezer:1"),
+            vec![("yt:x".to_string(), "source".to_string())]
+        );
     }
 
     #[test]
@@ -1036,10 +1300,16 @@ mod tests {
         assert_eq!(s.pending_stars(Some("u")).len(), 1);
         s.add_pending_playlist_add("u", "P", "b");
         s.add_pending_playlist_add("u", "P", "a");
-        assert_eq!(s.pending_playlist_adds("u"), vec![("P".into(), "b".into()), ("P".into(), "a".into())]);
+        assert_eq!(
+            s.pending_playlist_adds("u"),
+            vec![("P".into(), "b".into()), ("P".into(), "a".into())]
+        );
         s.add_pending_scrobble("v", "deezer:1", 5, true);
         s.add_pending_unstar("w", "L1");
-        assert_eq!(s.users_with_pending_work(), HashSet::from(["u".into(), "v".into(), "w".into()]));
+        assert_eq!(
+            s.users_with_pending_work(),
+            HashSet::from(["u".into(), "v".into(), "w".into()])
+        );
         assert!(s.remove_pending_star("u", "deezer:1"));
         s.remove_pending_scrobble("v", "deezer:1", 5, true);
         s.remove_pending_unstars("w", &["L1".into()]);
@@ -1057,7 +1327,13 @@ mod tests {
     #[test]
     fn imports_round_trip() {
         let s = Store::memory();
-        s.save_import("i1", "u", "queued", &json!({"playlist": "P"}), &json!([{"input": "a"}]));
+        s.save_import(
+            "i1",
+            "u",
+            "queued",
+            &json!({"playlist": "P"}),
+            &json!([{"input": "a"}]),
+        );
         s.save_import("i2", "u", "done", &json!({}), &json!([]));
         assert_eq!(s.get_import("i1").unwrap()["rows"][0]["input"], "a");
         assert_eq!(s.list_imports("u", 20).len(), 2);
@@ -1088,14 +1364,24 @@ mod tests {
         let backups = dir.path().join("backups");
         std::fs::create_dir_all(&backups).unwrap();
         for i in 0..3 {
-            std::fs::write(backups.join(format!("proxy-2000010{i}-000000.sqlite3")), b"x").unwrap();
+            std::fs::write(
+                backups.join(format!("proxy-2000010{i}-000000.sqlite3")),
+                b"x",
+            )
+            .unwrap();
         }
         let dest = s.backup(&backups, 2).unwrap().unwrap();
         let copy = Store::open(&dest).unwrap();
         assert!(copy.get_track("deezer:1").is_some());
         let n = std::fs::read_dir(&backups)
             .unwrap()
-            .filter(|e| e.as_ref().unwrap().file_name().to_string_lossy().ends_with(".sqlite3"))
+            .filter(|e| {
+                e.as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(".sqlite3")
+            })
             .count();
         assert_eq!(n, 2);
         assert!(s.integrity(false).is_empty());
