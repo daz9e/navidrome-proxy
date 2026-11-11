@@ -10,6 +10,8 @@ pub mod ids;
 pub mod lyrics;
 pub mod matching;
 pub mod navidrome;
+pub mod process;
+pub mod sources;
 pub mod subsonic;
 pub mod tasks;
 #[cfg(test)]
